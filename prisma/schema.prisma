@@ -1,0 +1,152 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  name         String?
+  files        File[]
+  generations  Generation[]
+  consents     ConsentRecord[]
+  credits      CreditTransaction[]
+  apiKeys      ApiKey[]
+  auditLogs    AuditLog[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model File {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key         String
+  mimeType    String
+  sizeBytes   Int
+  purpose     String
+  isTemporary Boolean  @default(false)
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model Generation {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      GenerationType
+  prompt    String?
+  status    GenerationStatus  @default(QUEUED)
+  provider  String?
+  outputUrl String?
+  error     String?
+  assets    GenerationAsset[]
+  job       Job?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+model GenerationAsset {
+  id           String     @id @default(cuid())
+  generationId String
+  generation   Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
+  fileId       String
+  role         String
+  createdAt    DateTime   @default(now())
+}
+
+model AvatarProfile {
+  id        String          @id @default(cuid())
+  userId    String
+  name      String
+  status    String          @default("draft")
+  images    TrainingImage[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+}
+
+model TrainingImage {
+  id              String        @id @default(cuid())
+  avatarProfileId String
+  avatarProfile   AvatarProfile @relation(fields: [avatarProfileId], references: [id], onDelete: Cascade)
+  fileId          String
+  consentId       String
+  createdAt       DateTime      @default(now())
+}
+
+model ConsentRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope     String
+  statement String
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+model AIProvider {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  enabled   Boolean  @default(false)
+  config    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Job {
+  id           String     @id @default(cuid())
+  generationId String?    @unique
+  generation   Generation? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  queueName    String
+  status       String     @default("queued")
+  attempts     Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model CreditTransaction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  reason    String
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  keyHash     String
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+}
+
+enum GenerationType {
+  IMAGE
+  EDIT
+  AVATAR
+  VIDEO
+}
+
+enum GenerationStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}

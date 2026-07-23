@@ -1,0 +1,28 @@
+{
+  "name": "angel-ai-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consent-based AI avatar and media generation platform.",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @angel-ai-studio/web --filter @angel-ai-studio/api dev",
+    "dev:web": "pnpm --filter @angel-ai-studio/web dev",
+    "dev:api": "pnpm --filter @angel-ai-studio/api dev",
+    "dev:worker": "pnpm --filter @angel-ai-studio/worker dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "prisma": "^6.12.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "packageManager": "pnpm@11.9.0"
+}
