@@ -36,6 +36,11 @@ services:
     ports:
       - "8000:8000"
 
+  audio-service:
+    build: ./audio-service
+    ports:
+      - "8100:8100"
+
   web:
     build: ./apps/web
     environment:

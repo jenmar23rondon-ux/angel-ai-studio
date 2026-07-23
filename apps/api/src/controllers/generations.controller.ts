@@ -5,17 +5,29 @@ import { enqueueGeneration } from "../services/queue.service.js";
 import { assertPromptAllowed } from "../services/moderation.service.js";
 
 const createGenerationSchema = z.object({
-  type: z.enum(["image", "edit", "avatar", "video"]),
+  type: z.enum(["image", "edit", "avatar", "video", "audio"]),
   prompt: z.string().trim().min(8).max(2000),
-  consentConfirmed: z.boolean()
+  consentConfirmed: z.boolean(),
+  voiceOptions: z
+    .object({
+      voiceMode: z.enum(["voice-conversion", "accent", "translation"]),
+      targetVoice: z.string().trim().min(2).max(120),
+      accent: z.string().trim().min(2).max(80),
+      targetLanguage: z.string().trim().min(2).max(80),
+      emotion: z.string().trim().min(2).max(80),
+      preserveEmotion: z.boolean(),
+      removeNoise: z.boolean()
+    })
+    .optional()
 });
 
 type Generation = {
   id: string;
-  type: "image" | "edit" | "avatar" | "video";
+  type: "image" | "edit" | "avatar" | "video" | "audio";
   prompt: string;
   status: "queued" | "processing" | "completed" | "failed";
   outputUrl?: string;
+  metadata?: Record<string, unknown>;
   createdAt: string;
 };
 
@@ -36,6 +48,7 @@ export async function createGeneration(request: Request, response: Response) {
     type: input.type,
     prompt: input.prompt,
     status: "queued",
+    metadata: input.type === "audio" ? input.voiceOptions : undefined,
     createdAt: new Date().toISOString()
   };
 

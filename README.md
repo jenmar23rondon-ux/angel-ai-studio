@@ -9,6 +9,7 @@ This repository is a production-oriented starter for an AI media platform with:
 - PostgreSQL and Prisma data model
 - Redis/BullMQ worker pipeline
 - FastAPI AI service boundary
+- FastAPI audio service boundary for voice conversion, accents and translation
 - Docker Compose for local infrastructure
 - Safety, consent and audit-first architecture
 
@@ -29,6 +30,7 @@ Open:
 - Web: http://localhost:5173
 - API health: http://localhost:4000/health
 - AI service, if started separately: http://localhost:8000/health
+- Audio service, if started separately: http://localhost:8100/health
 
 ## MVP scope
 
@@ -40,3 +42,13 @@ The first version focuses on a complete, consent-based generation loop:
 4. Output is stored and shown in the private gallery.
 
 Provider integrations are intentionally isolated behind adapters so the MVP can start with one provider, such as `fal.ai` or Replicate.
+
+## Voice Studio
+
+The app now includes a `Voice Studio` mode for recorded audio workflows:
+
+- Change voice while keeping the same words.
+- Preserve rhythm and emotion when the provider supports it.
+- Apply accent targets such as British, Mexican Spanish or Colombian Spanish.
+- Translate between English, Spanish, Portuguese and French.
+- Keep consent checks required for cloned or uploaded voices.

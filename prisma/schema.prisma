@@ -142,6 +142,7 @@ enum GenerationType {
   EDIT
   AVATAR
   VIDEO
+  AUDIO
 }
 
 enum GenerationStatus {

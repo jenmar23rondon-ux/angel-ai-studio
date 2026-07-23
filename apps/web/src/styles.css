@@ -186,6 +186,30 @@ textarea {
   line-height: 1.5;
 }
 
+select {
+  min-height: 40px;
+  color: #eff6fc;
+  background: #0d1218;
+  border: 1px solid #314256;
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.voice-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  color: #d4dee8;
+}
+
 .upload-slot {
   display: grid;
   gap: 8px;
@@ -275,6 +299,12 @@ textarea {
   line-height: 1.4;
 }
 
+.asset-meta {
+  display: block;
+  margin: -6px 12px 14px;
+  color: #9fb0bf;
+}
+
 .status {
   padding: 3px 8px;
   font-size: 12px;
@@ -311,5 +341,9 @@ textarea {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .voice-controls {
+    grid-template-columns: 1fr;
   }
 }

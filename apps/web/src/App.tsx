@@ -1,12 +1,13 @@
-import { Activity, ImagePlus, Images, ShieldCheck, Sparkles, Video } from "lucide-react";
+import { Activity, ImagePlus, Images, Mic2, ShieldCheck, Sparkles, Video } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { createGeneration, Generation, GenerationMode, listGenerations } from "./services/api";
+import { createGeneration, Generation, GenerationMode, listGenerations, VoiceOptions } from "./services/api";
 
 const modes: Array<{ id: GenerationMode; label: string; icon: typeof Sparkles }> = [
   { id: "image", label: "Text to image", icon: Sparkles },
   { id: "edit", label: "Edit image", icon: ImagePlus },
   { id: "avatar", label: "Avatar", icon: ShieldCheck },
-  { id: "video", label: "Image to video", icon: Video }
+  { id: "video", label: "Image to video", icon: Video },
+  { id: "audio", label: "Voice Studio", icon: Mic2 }
 ];
 
 const samples: Generation[] = [
@@ -21,16 +22,32 @@ const samples: Generation[] = [
   },
   {
     id: "demo-2",
-    type: "avatar",
-    prompt: "Professional creator avatar, natural identity preservation",
+    type: "audio",
+    prompt: "Convert my recorded Spanish audio to English while preserving tone and emotion",
     status: "processing",
+    metadata: {
+      voiceMode: "translation",
+      targetLanguage: "English",
+      accent: "Neutral US"
+    },
     createdAt: new Date(Date.now() - 1000 * 60 * 7).toISOString()
   }
 ];
 
+const defaultVoiceOptions: VoiceOptions = {
+  voiceMode: "voice-conversion",
+  targetVoice: "Designed studio voice",
+  accent: "Neutral US",
+  targetLanguage: "English",
+  emotion: "Natural",
+  preserveEmotion: true,
+  removeNoise: true
+};
+
 export function App() {
   const [mode, setMode] = useState<GenerationMode>("image");
   const [prompt, setPrompt] = useState("Create a cinematic studio portrait for a consent-based AI avatar profile.");
+  const [voiceOptions, setVoiceOptions] = useState<VoiceOptions>(defaultVoiceOptions);
   const [consentConfirmed, setConsentConfirmed] = useState(true);
   const [generations, setGenerations] = useState<Generation[]>(samples);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,13 +74,22 @@ export function App() {
     setIsSubmitting(true);
 
     try {
-      const generation = await createGeneration({ type: mode, prompt, consentConfirmed });
+      const generation = await createGeneration({
+        type: mode,
+        prompt,
+        consentConfirmed,
+        voiceOptions: mode === "audio" ? voiceOptions : undefined
+      });
       setGenerations((current) => [generation, ...current.filter((item) => !item.id.startsWith("demo-"))]);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Generation failed");
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function updateVoiceOption<Key extends keyof VoiceOptions>(key: Key, value: VoiceOptions[Key]) {
+    setVoiceOptions((current) => ({ ...current, [key]: value }));
   }
 
   return (
@@ -73,7 +99,7 @@ export function App() {
           <div className="brand-mark">a</div>
           <div>
             <strong>angel-ai-studio</strong>
-            <span>AI media studio</span>
+            <span>AI media and voice studio</span>
           </div>
         </div>
 
@@ -99,7 +125,7 @@ export function App() {
         <header className="topbar">
           <div>
             <h1>Generation workspace</h1>
-            <p>Build images, avatars, edits and videos through one guarded pipeline.</p>
+            <p>Build images, avatars, edits, videos and voice transformations through one guarded pipeline.</p>
           </div>
           <div className="status-pills">
             <span>
@@ -121,14 +147,95 @@ export function App() {
             </div>
 
             <label className="field">
-              Prompt
+              {mode === "audio" ? "Voice task" : "Prompt"}
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} />
             </label>
 
+            {mode === "audio" && (
+              <div className="voice-controls">
+                <label className="field">
+                  Mode
+                  <select
+                    value={voiceOptions.voiceMode}
+                    onChange={(event) => updateVoiceOption("voiceMode", event.target.value as VoiceOptions["voiceMode"])}
+                  >
+                    <option value="voice-conversion">Change voice, keep words</option>
+                    <option value="accent">Change accent</option>
+                    <option value="translation">Translate with voice</option>
+                  </select>
+                </label>
+
+                <label className="field">
+                  Target voice
+                  <select
+                    value={voiceOptions.targetVoice}
+                    onChange={(event) => updateVoiceOption("targetVoice", event.target.value)}
+                  >
+                    <option>Designed studio voice</option>
+                    <option>My cloned voice</option>
+                    <option>Warm narrator</option>
+                    <option>Clear assistant</option>
+                  </select>
+                </label>
+
+                <label className="field">
+                  Accent
+                  <select value={voiceOptions.accent} onChange={(event) => updateVoiceOption("accent", event.target.value)}>
+                    <option>Neutral US</option>
+                    <option>British</option>
+                    <option>Mexican Spanish</option>
+                    <option>Colombian Spanish</option>
+                    <option>Brazilian Portuguese</option>
+                  </select>
+                </label>
+
+                <label className="field">
+                  Language
+                  <select
+                    value={voiceOptions.targetLanguage}
+                    onChange={(event) => updateVoiceOption("targetLanguage", event.target.value)}
+                  >
+                    <option>English</option>
+                    <option>Spanish</option>
+                    <option>Portuguese</option>
+                    <option>French</option>
+                  </select>
+                </label>
+
+                <label className="field">
+                  Emotion
+                  <select value={voiceOptions.emotion} onChange={(event) => updateVoiceOption("emotion", event.target.value)}>
+                    <option>Natural</option>
+                    <option>Calm</option>
+                    <option>Energetic</option>
+                    <option>Serious</option>
+                  </select>
+                </label>
+
+                <label className="toggle-row">
+                  <input
+                    checked={voiceOptions.preserveEmotion}
+                    onChange={(event) => updateVoiceOption("preserveEmotion", event.target.checked)}
+                    type="checkbox"
+                  />
+                  Preserve rhythm and emotion
+                </label>
+
+                <label className="toggle-row">
+                  <input
+                    checked={voiceOptions.removeNoise}
+                    onChange={(event) => updateVoiceOption("removeNoise", event.target.checked)}
+                    type="checkbox"
+                  />
+                  Remove background noise first
+                </label>
+              </div>
+            )}
+
             <div className="upload-slot">
-              <ImagePlus size={22} />
-              <span>Drop source image or training photos here</span>
-              <small>Upload endpoint is scaffolded for S3 signed URLs.</small>
+              {mode === "audio" ? <Mic2 size={22} /> : <ImagePlus size={22} />}
+              <span>{mode === "audio" ? "Drop audio file or record from the browser" : "Drop source image or training photos here"}</span>
+              <small>{mode === "audio" ? "Audio upload and recording flow is scaffolded for MP3/WAV." : "Upload endpoint is scaffolded for S3 signed URLs."}</small>
             </div>
 
             <label className="consent-row">
@@ -137,14 +244,14 @@ export function App() {
                 onChange={(event) => setConsentConfirmed(event.target.checked)}
                 type="checkbox"
               />
-              I confirm I have rights and consent for all source media.
+              I confirm I have rights and consent for all source media and voices.
             </label>
 
             {error && <p className="error-message">{error}</p>}
 
             <button className="primary-action" disabled={isSubmitting || !prompt.trim()} onClick={submitGeneration}>
               <Sparkles size={18} />
-              {isSubmitting ? "Queuing..." : "Create generation"}
+              {isSubmitting ? "Queuing..." : mode === "audio" ? "Create voice job" : "Create generation"}
             </button>
           </div>
 
@@ -169,6 +276,12 @@ export function App() {
                     <span className={`status ${item.status}`}>{item.status}</span>
                   </div>
                   <p>{item.prompt}</p>
+                  {item.type === "audio" && item.metadata && (
+                    <small className="asset-meta">
+                      {String(item.metadata.voiceMode ?? "voice")} · {String(item.metadata.targetLanguage ?? "same language")} ·{" "}
+                      {String(item.metadata.accent ?? "native accent")}
+                    </small>
+                  )}
                 </article>
               ))}
             </div>
