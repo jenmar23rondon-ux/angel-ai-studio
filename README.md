@@ -56,4 +56,4 @@ The app now includes a `Voice Studio` mode for recorded audio workflows:
 
 ## Real-Time Face Lab
 
-The web app includes a `Real-time face` mode that opens the browser camera and renders a delayed AI-face preview. The current implementation is a working interactive scaffold: it maps pointer/camera-stage movement, expression controls and latency settings into an animated avatar. A production version can replace the browser-side gesture map with MediaPipe face landmarks, WebRTC streaming and a generative avatar provider.
+The web app includes a `Real-time face` mode that opens the browser camera and renders a delayed AI-face preview. The current implementation is a working interactive scaffold: it maps pointer/camera-stage movement, expression controls, hand gesture controls, fictional reference uploads and latency settings into an animated avatar. A production version can replace the browser-side gesture map with MediaPipe face landmarks, WebRTC streaming and a generative avatar provider.

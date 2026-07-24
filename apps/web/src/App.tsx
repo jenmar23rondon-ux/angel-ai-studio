@@ -19,6 +19,7 @@ type MotionState = {
   y: number;
   smile: number;
   blink: number;
+  hand: number;
 };
 
 const modes: Array<{ id: GenerationMode; label: string; icon: LucideIcon }> = [
@@ -68,7 +69,8 @@ const defaultMotion: MotionState = {
   x: 0,
   y: 0,
   smile: 0.45,
-  blink: 0
+  blink: 0,
+  hand: 0.25
 };
 
 export function App() {
@@ -79,7 +81,10 @@ export function App() {
   const [cameraError, setCameraError] = useState("");
   const [latencyMs, setLatencyMs] = useState(450);
   const [avatarStyle, setAvatarStyle] = useState("cinematic");
+  const [fictionalIdentity, setFictionalIdentity] = useState("generated");
   const [expression, setExpression] = useState("natural");
+  const [handGesture, setHandGesture] = useState("idle");
+  const [referenceImage, setReferenceImage] = useState("");
   const [motion, setMotion] = useState<MotionState>(defaultMotion);
   const [delayedMotion, setDelayedMotion] = useState<MotionState>(defaultMotion);
   const [consentConfirmed, setConsentConfirmed] = useState(true);
@@ -177,8 +182,21 @@ export function App() {
       x: Math.max(-1, Math.min(1, x)),
       y: Math.max(-1, Math.min(1, y)),
       smile: Math.max(0.12, Math.min(0.95, 0.45 + expressionBoost - y * 0.12)),
-      blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.96 ? 1 : 0)
+      blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.96 ? 1 : 0),
+      hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.7 : Math.max(0.12, Math.min(0.85, 0.3 - y * 0.25))
     });
+  }
+
+  function loadReferenceImage(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      setReferenceImage(typeof reader.result === "string" ? reader.result : "");
+    });
+    reader.readAsDataURL(file);
   }
 
   return (
@@ -325,6 +343,15 @@ export function App() {
 
             {mode === "realtime" && (
               <div className="realtime-controls">
+                <label className="reference-upload">
+                  <input accept="image/*" onChange={(event) => loadReferenceImage(event.target.files?.[0])} type="file" />
+                  <div className="reference-preview">
+                    {referenceImage ? <img alt="Fictional avatar reference" src={referenceImage} /> : <ImagePlus size={24} />}
+                  </div>
+                  <span>Upload fictional or AI-generated avatar reference</span>
+                  <small>No celebrity or private-person impersonation.</small>
+                </label>
+
                 <div
                   className="camera-stage"
                   onPointerMove={(event) => updateMotionFromPointer(event.clientX, event.clientY, event.currentTarget)}
@@ -347,6 +374,15 @@ export function App() {
 
                 <div className="control-grid">
                   <label className="field">
+                    Identity source
+                    <select value={fictionalIdentity} onChange={(event) => setFictionalIdentity(event.target.value)}>
+                      <option value="generated">AI-generated character</option>
+                      <option value="uploaded">Uploaded fictional reference</option>
+                      <option value="licensed">Licensed actor reference</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
                     AI face style
                     <select value={avatarStyle} onChange={(event) => setAvatarStyle(event.target.value)}>
                       <option value="cinematic">Cinematic avatar</option>
@@ -363,6 +399,16 @@ export function App() {
                       <option value="smile">Smile</option>
                       <option value="serious">Serious</option>
                       <option value="blink">Blink test</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    Hand gesture
+                    <select value={handGesture} onChange={(event) => setHandGesture(event.target.value)}>
+                      <option value="idle">Idle hands</option>
+                      <option value="wave">Wave</option>
+                      <option value="point">Point</option>
+                      <option value="follow">Follow camera area</option>
                     </select>
                   </label>
 
@@ -389,6 +435,10 @@ export function App() {
                   <button className="secondary-action" onClick={() => setExpression("smile")} type="button">
                     <ScanFace size={17} />
                     Test smile
+                  </button>
+                  <button className="secondary-action" onClick={() => setHandGesture("wave")} type="button">
+                    <Radio size={17} />
+                    Test hand
                   </button>
                 </div>
               </div>
@@ -444,6 +494,9 @@ export function App() {
             {mode === "realtime" ? (
               <div className="avatar-output">
                 <div className={`ai-face ${avatarStyle}`}>
+                  {referenceImage && fictionalIdentity === "uploaded" && (
+                    <img alt="Fictional reference influence" className="reference-backplate" src={referenceImage} />
+                  )}
                   <div
                     className="face-head"
                     style={{
@@ -464,6 +517,16 @@ export function App() {
                       }}
                     />
                   </div>
+                  <div
+                    className={`avatar-hand ${handGesture}`}
+                    style={{
+                      transform: `translate(${delayedMotion.x * 24}px, ${80 - delayedMotion.hand * 120}px) rotate(${
+                        handGesture === "wave" ? -22 + delayedMotion.x * 18 : handGesture === "point" ? -42 : -10
+                      }deg)`
+                    }}
+                  >
+                    <span />
+                  </div>
                   <div className="avatar-shadow" />
                 </div>
 
@@ -471,11 +534,13 @@ export function App() {
                   <span>Head X {delayedMotion.x.toFixed(2)}</span>
                   <span>Head Y {delayedMotion.y.toFixed(2)}</span>
                   <span>Smile {delayedMotion.smile.toFixed(2)}</span>
+                  <span>Hand {delayedMotion.hand.toFixed(2)}</span>
                 </div>
 
                 <div className="pipeline-steps">
                   <span className={liveEnabled ? "done" : ""}>camera</span>
                   <span className={liveEnabled ? "done" : ""}>gesture map</span>
+                  <span className={referenceImage ? "done" : ""}>{fictionalIdentity}</span>
                   <span>AI face render</span>
                   <span>stream output</span>
                 </div>

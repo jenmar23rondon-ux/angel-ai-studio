@@ -215,6 +215,54 @@ select {
   gap: 14px;
 }
 
+.reference-upload {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: center;
+  padding: 12px;
+  color: #dce8f1;
+  cursor: pointer;
+  background: #0e151d;
+  border: 1px solid #314256;
+  border-radius: 8px;
+}
+
+.reference-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.reference-preview {
+  display: grid;
+  grid-row: span 2;
+  width: 76px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  place-items: center;
+  color: #76f2c2;
+  background: #17222d;
+  border: 1px dashed #40546b;
+  border-radius: 8px;
+}
+
+.reference-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reference-upload span,
+.reference-upload small {
+  min-width: 0;
+}
+
+.reference-upload small {
+  color: #9fb0bf;
+}
+
 .camera-stage {
   position: relative;
   display: grid;
@@ -286,7 +334,7 @@ select {
 
 .button-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -385,6 +433,16 @@ select {
   border-radius: 8px;
 }
 
+.reference-backplate {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.22;
+  filter: saturate(1.15) contrast(1.08);
+}
+
 .ai-face.anime {
   background:
     linear-gradient(135deg, rgba(255, 139, 213, 0.18), transparent 38%),
@@ -408,6 +466,7 @@ select {
 
 .face-head {
   position: relative;
+  z-index: 1;
   width: min(58%, 300px);
   aspect-ratio: 0.78;
   background: linear-gradient(160deg, #f0c5a7, #a86f57);
@@ -468,12 +527,73 @@ select {
 }
 
 .avatar-shadow {
+  z-index: 1;
   width: min(42%, 260px);
   height: 28px;
   margin-top: -64px;
   background: rgba(0, 0, 0, 0.34);
   border-radius: 999px;
   filter: blur(10px);
+}
+
+.avatar-hand {
+  position: absolute;
+  right: 24%;
+  bottom: 20%;
+  z-index: 2;
+  width: 64px;
+  height: 92px;
+  background: linear-gradient(160deg, #f0c5a7, #a86f57);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 34px 34px 28px 28px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  transform-origin: 50% 100%;
+  transition: transform 180ms ease;
+}
+
+.avatar-hand span,
+.avatar-hand::before,
+.avatar-hand::after {
+  position: absolute;
+  top: -30px;
+  width: 13px;
+  height: 44px;
+  content: "";
+  background: linear-gradient(160deg, #f0c5a7, #a86f57);
+  border-radius: 999px;
+}
+
+.avatar-hand span {
+  left: 25px;
+}
+
+.avatar-hand::before {
+  left: 8px;
+  transform: rotate(-11deg);
+}
+
+.avatar-hand::after {
+  right: 8px;
+  transform: rotate(11deg);
+}
+
+.avatar-hand.point::after {
+  height: 70px;
+  transform: translateY(-22px) rotate(8deg);
+}
+
+.avatar-hand.wave {
+  animation: wave-hand 900ms ease-in-out infinite alternate;
+}
+
+@keyframes wave-hand {
+  from {
+    rotate: -8deg;
+  }
+
+  to {
+    rotate: 14deg;
+  }
 }
 
 .signal-strip,

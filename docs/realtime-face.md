@@ -15,7 +15,9 @@ The current MVP runs fully in the browser and demonstrates:
 - Camera permission and preview.
 - Adjustable output delay.
 - Avatar style selection.
+- Fictional or AI-generated avatar reference upload.
 - Expression controls.
+- Basic hand gesture controls.
 - A right-side AI face preview that responds to gesture input.
 
 Production options:
@@ -24,3 +26,4 @@ Production options:
 - LiveKit or WebRTC for real-time transport.
 - A dedicated GPU service for generative face rendering.
 - Consent checks and visible AI-content labeling before streaming.
+- Reference validation that rejects celebrity or private-person impersonation.
