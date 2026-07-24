@@ -14,12 +14,12 @@ The current MVP runs fully in the browser and demonstrates:
 
 - Camera permission and preview.
 - Camera-frame motion tracking that drives the avatar in real time.
-- Adjustable output delay.
+- Zero-delay browser-side photo motion.
 - Avatar style selection.
 - Fictional or AI-generated avatar reference upload.
 - Expression controls.
 - Basic hand gesture controls.
-- A right-side live photo puppet preview that uses the uploaded image as the output.
+- A layered photo puppet preview that uses the uploaded image as the output and moves face, cheeks, hair and body regions separately.
 
 Production options:
 

@@ -84,7 +84,7 @@ export function App() {
   const [micError, setMicError] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [cameraError, setCameraError] = useState("");
-  const [latencyMs, setLatencyMs] = useState(180);
+  const [latencyMs] = useState(0);
   const [avatarStyle, setAvatarStyle] = useState("photo");
   const [puppetZoom, setPuppetZoom] = useState(1.08);
   const [motionIntensity, setMotionIntensity] = useState(1.35);
@@ -118,6 +118,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (latencyMs === 0) {
+      setDelayedMotion(motion);
+      return;
+    }
+
     const timer = window.setTimeout(() => setDelayedMotion(motion), latencyMs);
     return () => window.clearTimeout(timer);
   }, [latencyMs, motion]);
@@ -429,7 +434,7 @@ export function App() {
           <div className="creator-panel">
             <div className="panel-header">
               <h2>{modes.find((item) => item.id === mode)?.label}</h2>
-              <span>{mode === "realtime" ? `${latencyMs}ms preview delay` : "Provider: mock adapter"}</span>
+              <span>{mode === "realtime" ? "camera-driven live output" : "Provider: mock adapter"}</span>
             </div>
 
             {mode !== "realtime" && (
@@ -635,18 +640,6 @@ export function App() {
                   </label>
 
                   <label className="field range-field">
-                    Delay: {latencyMs}ms
-                    <input
-                      max="900"
-                      min="0"
-                      onChange={(event) => setLatencyMs(Number(event.target.value))}
-                      step="30"
-                      type="range"
-                      value={latencyMs}
-                    />
-                  </label>
-
-                  <label className="field range-field">
                     Motion strength: {motionIntensity.toFixed(1)}x
                     <input
                       max="2.4"
@@ -749,7 +742,54 @@ export function App() {
                         }px) rotate(${delayedMotion.x * 4 * motionIntensity}deg) scale(${puppetZoom})`
                       }}
                     >
-                      <img alt="Live photo puppet output" src={referenceImage} />
+                      <img alt="Live photo puppet output" className="puppet-base" src={referenceImage} />
+                      <div
+                        className="puppet-layer puppet-body"
+                        style={{
+                          backgroundImage: `url(${referenceImage})`,
+                          transform: `translate(${delayedMotion.x * -10 * motionIntensity}px, ${
+                            delayedMotion.y * 10 * motionIntensity
+                          }px) rotate(${delayedMotion.x * -2}deg)`
+                        }}
+                      />
+                      <div
+                        className="puppet-layer puppet-hair"
+                        style={{
+                          backgroundImage: `url(${referenceImage})`,
+                          transform: `translate(${delayedMotion.x * 14 * motionIntensity}px, ${
+                            delayedMotion.y * 8 * motionIntensity
+                          }px) rotate(${delayedMotion.x * 3.5 * motionIntensity}deg)`
+                        }}
+                      />
+                      <div
+                        className="puppet-layer puppet-face"
+                        style={{
+                          backgroundImage: `url(${referenceImage})`,
+                          transform: `translate(${delayedMotion.x * 18 * motionIntensity}px, ${
+                            delayedMotion.y * 12 * motionIntensity
+                          }px) rotate(${delayedMotion.x * 3 * motionIntensity}deg) scale(${
+                            1 + delayedMotion.smile * 0.018
+                          })`
+                        }}
+                      />
+                      <div
+                        className="puppet-layer puppet-cheek left"
+                        style={{
+                          backgroundImage: `url(${referenceImage})`,
+                          transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
+                            delayedMotion.y * 6 * motionIntensity
+                          }px) scale(${1 + delayedMotion.smile * 0.04})`
+                        }}
+                      />
+                      <div
+                        className="puppet-layer puppet-cheek right"
+                        style={{
+                          backgroundImage: `url(${referenceImage})`,
+                          transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
+                            delayedMotion.y * 6 * motionIntensity
+                          }px) scale(${1 + delayedMotion.smile * 0.04})`
+                        }}
+                      />
                       <div
                         className="puppet-face-focus"
                         style={{
