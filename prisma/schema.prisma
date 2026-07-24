@@ -143,6 +143,7 @@ enum GenerationType {
   AVATAR
   VIDEO
   AUDIO
+  REALTIME
 }
 
 enum GenerationStatus {

@@ -23,6 +23,7 @@
 
 - Image-to-video
 - Avatar video
+- Real-time face tracking and delayed AI avatar preview
 - Credits and payments
 - Public API
 - Admin panel

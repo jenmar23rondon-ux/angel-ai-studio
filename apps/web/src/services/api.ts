@@ -1,4 +1,4 @@
-export type GenerationMode = "image" | "edit" | "avatar" | "video" | "audio";
+export type GenerationMode = "image" | "edit" | "avatar" | "video" | "audio" | "realtime";
 
 export type VoiceOptions = {
   voiceMode: "voice-conversion" | "accent" | "translation";

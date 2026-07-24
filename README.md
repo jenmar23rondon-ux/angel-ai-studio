@@ -10,6 +10,7 @@ This repository is a production-oriented starter for an AI media platform with:
 - Redis/BullMQ worker pipeline
 - FastAPI AI service boundary
 - FastAPI audio service boundary for voice conversion, accents and translation
+- Interactive real-time face preview mode for camera-driven avatar sessions
 - Docker Compose for local infrastructure
 - Safety, consent and audit-first architecture
 
@@ -52,3 +53,7 @@ The app now includes a `Voice Studio` mode for recorded audio workflows:
 - Apply accent targets such as British, Mexican Spanish or Colombian Spanish.
 - Translate between English, Spanish, Portuguese and French.
 - Keep consent checks required for cloned or uploaded voices.
+
+## Real-Time Face Lab
+
+The web app includes a `Real-time face` mode that opens the browser camera and renders a delayed AI-face preview. The current implementation is a working interactive scaffold: it maps pointer/camera-stage movement, expression controls and latency settings into an animated avatar. A production version can replace the browser-side gesture map with MediaPipe face landmarks, WebRTC streaming and a generative avatar provider.

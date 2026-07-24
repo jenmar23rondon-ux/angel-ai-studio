@@ -5,7 +5,7 @@ import { enqueueGeneration } from "../services/queue.service.js";
 import { assertPromptAllowed } from "../services/moderation.service.js";
 
 const createGenerationSchema = z.object({
-  type: z.enum(["image", "edit", "avatar", "video", "audio"]),
+  type: z.enum(["image", "edit", "avatar", "video", "audio", "realtime"]),
   prompt: z.string().trim().min(8).max(2000),
   consentConfirmed: z.boolean(),
   voiceOptions: z
@@ -23,7 +23,7 @@ const createGenerationSchema = z.object({
 
 type Generation = {
   id: string;
-  type: "image" | "edit" | "avatar" | "video" | "audio";
+  type: "image" | "edit" | "avatar" | "video" | "audio" | "realtime";
   prompt: string;
   status: "queued" | "processing" | "completed" | "failed";
   outputUrl?: string;
