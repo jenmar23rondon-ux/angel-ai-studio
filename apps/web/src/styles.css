@@ -367,7 +367,7 @@ select {
   min-height: 260px;
   overflow: hidden;
   place-items: center;
-  cursor: crosshair;
+  cursor: default;
   background: radial-gradient(circle at 50% 20%, #1d3240, #0b1016 72%);
   border: 1px solid #314256;
   border-radius: 8px;
@@ -540,10 +540,7 @@ select {
   overflow: hidden;
   place-items: center;
   perspective: 900px;
-  background:
-    linear-gradient(135deg, rgba(118, 242, 194, 0.16), transparent 36%),
-    linear-gradient(225deg, rgba(79, 147, 255, 0.17), transparent 38%),
-    #0d141b;
+  background: #0d141b;
   border: 1px solid #263a4f;
   border-radius: 8px;
 }
@@ -574,20 +571,33 @@ select {
 
 .photo-puppet {
   position: absolute;
-  inset: -5%;
+  inset: -6%;
   display: grid;
   place-items: center;
   transform-origin: 50% 50%;
-  transition: transform 34ms linear;
+  backface-visibility: hidden;
+  transition: transform 24ms linear;
   will-change: transform;
+}
+
+.photo-puppet::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background:
+    radial-gradient(circle at 46% 36%, rgba(255, 255, 255, 0.08), transparent 26%),
+    radial-gradient(circle at 58% 47%, rgba(8, 12, 16, 0.14), transparent 22%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.12), transparent 28%, transparent 72%, rgba(0, 0, 0, 0.12));
+  mix-blend-mode: soft-light;
+  pointer-events: none;
 }
 
 .puppet-base {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(1.03) contrast(1.06) brightness(0.9);
-  opacity: 0.9;
+  filter: saturate(1.02) contrast(1.04) brightness(0.94);
+  opacity: 0.96;
 }
 
 .ai-face.portrait .puppet-base {
@@ -605,7 +615,8 @@ select {
   background-position: center;
   background-size: cover;
   will-change: transform;
-  transition: transform 28ms linear;
+  opacity: 0.72;
+  transition: transform 24ms linear;
 }
 
 .ai-face.fullbody .puppet-layer {
@@ -615,21 +626,24 @@ select {
 
 .puppet-body {
   clip-path: ellipse(40% 34% at 50% 78%);
-  filter: brightness(1) saturate(1.04);
+  filter: brightness(0.98) saturate(1.02);
+  opacity: 0.48;
 }
 
 .puppet-hair {
-  clip-path: ellipse(34% 22% at 50% 21%);
-  filter: contrast(1.12) saturate(1.05);
+  clip-path: ellipse(36% 24% at 50% 22%);
+  filter: contrast(1.08) saturate(1.04);
+  opacity: 0.62;
 }
 
 .puppet-face {
-  clip-path: ellipse(27% 32% at 50% 39%);
-  filter: brightness(1.08) saturate(1.06);
+  clip-path: ellipse(29% 34% at 50% 40%);
+  filter: brightness(1.04) saturate(1.04);
+  opacity: 0.52;
 }
 
 .puppet-cheek {
-  opacity: 0.72;
+  opacity: 0.4;
   filter: brightness(1.08) saturate(1.08);
   mix-blend-mode: soft-light;
 }
@@ -642,19 +656,35 @@ select {
   clip-path: ellipse(11% 9% at 58% 44%);
 }
 
+.puppet-jaw {
+  clip-path: ellipse(21% 13% at 50% 55%);
+  filter: brightness(1.01) saturate(1.04);
+  opacity: 0.44;
+}
+
+.puppet-depth-shadow {
+  position: absolute;
+  inset: 8% 14%;
+  background: radial-gradient(ellipse at center, transparent 46%, rgba(0, 0, 0, 0.32) 68%, transparent 78%);
+  opacity: 0.38;
+  filter: blur(20px);
+  pointer-events: none;
+  transition: transform 24ms linear;
+}
+
 .puppet-mouth-live {
   position: absolute;
   top: 46%;
   left: 44%;
   width: 12%;
   height: 5%;
-  background: rgba(24, 8, 10, 0.72);
+  background: rgba(24, 8, 10, 0.58);
   border: 1px solid rgba(255, 220, 220, 0.18);
   border-radius: 999px;
-  filter: blur(0.2px);
-  mix-blend-mode: multiply;
+  filter: blur(0.8px);
+  mix-blend-mode: soft-light;
   transform-origin: 50% 50%;
-  transition: transform 28ms linear, opacity 28ms linear;
+  transition: transform 24ms linear, opacity 24ms linear;
   pointer-events: none;
 }
 
@@ -663,11 +693,11 @@ select {
   top: 34%;
   width: 8%;
   height: 2.8%;
-  background: rgba(18, 12, 10, 0.78);
+  background: rgba(18, 12, 10, 0.42);
   border-radius: 999px;
-  filter: blur(0.4px);
-  mix-blend-mode: multiply;
-  transition: opacity 28ms linear, transform 28ms linear;
+  filter: blur(1.4px);
+  mix-blend-mode: soft-light;
+  transition: opacity 24ms linear, transform 24ms linear;
   pointer-events: none;
 }
 
@@ -685,7 +715,8 @@ select {
   left: 32%;
   width: 36%;
   height: 38%;
-  border: 1px solid rgba(118, 242, 194, 0.2);
+  opacity: 0;
+  border: 0;
   border-radius: 44%;
   box-shadow: 0 0 38px rgba(118, 242, 194, 0.12);
   mix-blend-mode: screen;
@@ -698,11 +729,11 @@ select {
   width: 120px;
   height: 120px;
   margin: -60px 0 0 -60px;
-  border: 1px solid rgba(118, 242, 194, 0.55);
+  border: 1px solid rgba(118, 242, 194, 0.22);
   border-radius: 50%;
-  box-shadow: 0 0 34px rgba(118, 242, 194, 0.22);
+  box-shadow: 0 0 28px rgba(118, 242, 194, 0.1);
   transform: scale(0.7);
-  transition: left 34ms linear, top 34ms linear, opacity 34ms linear;
+  transition: left 24ms linear, top 24ms linear, opacity 24ms linear;
   pointer-events: none;
 }
 
@@ -712,12 +743,12 @@ select {
   bottom: 20%;
   width: 62px;
   height: 90px;
-  background: rgba(240, 197, 167, 0.88);
+  background: rgba(240, 197, 167, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 34px 34px 28px 28px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3);
   transform-origin: 50% 100%;
-  transition: transform 34ms linear, opacity 34ms linear;
+  transition: transform 24ms linear, opacity 24ms linear;
 }
 
 .photo-hand-cue span,

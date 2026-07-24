@@ -17,6 +17,9 @@ import { createGeneration, Generation, GenerationMode, listGenerations, VoiceOpt
 type MotionState = {
   x: number;
   y: number;
+  roll: number;
+  lean: number;
+  proximity: number;
   smile: number;
   blink: number;
   hand: number;
@@ -82,6 +85,9 @@ const defaultVoiceOptions: VoiceOptions = {
 const defaultMotion: MotionState = {
   x: 0,
   y: 0,
+  roll: 0,
+  lean: 0,
+  proximity: 0.5,
   smile: 0.45,
   blink: 0,
   hand: 0.25,
@@ -92,6 +98,19 @@ const defaultMotion: MotionState = {
 
 const clamp = (value: number, min = -1, max = 1) => Math.max(min, Math.min(max, value));
 const mediapipeVersion = "0.10.35";
+const smoothMotion = (current: MotionState, next: MotionState, amount = 0.34): MotionState => ({
+  x: current.x + (next.x - current.x) * amount,
+  y: current.y + (next.y - current.y) * amount,
+  roll: current.roll + (next.roll - current.roll) * amount,
+  lean: current.lean + (next.lean - current.lean) * amount,
+  proximity: current.proximity + (next.proximity - current.proximity) * amount,
+  smile: current.smile + (next.smile - current.smile) * amount,
+  blink: current.blink + (next.blink - current.blink) * 0.58,
+  hand: current.hand + (next.hand - current.hand) * amount,
+  mouth: current.mouth + (next.mouth - current.mouth) * 0.42,
+  touchX: current.touchX + (next.touchX - current.touchX) * amount,
+  touchY: current.touchY + (next.touchY - current.touchY) * amount
+});
 
 export function App() {
   const [mode, setMode] = useState<GenerationMode>("image");
@@ -132,6 +151,7 @@ export function App() {
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const faceLandmarkerRef = useRef<any>(null);
   const handLandmarkerRef = useRef<any>(null);
+  const smoothedMotionRef = useRef<MotionState>(defaultMotion);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -320,6 +340,8 @@ export function App() {
     setTrackingStrength(0);
     setFaceConfidence(0);
     setHandConfidence(0);
+    smoothedMotionRef.current = defaultMotion;
+    setMotion(defaultMotion);
     setTrackingLabel(trackingReady ? "landmark engine ready" : "landmark engine idle");
   }
 
@@ -399,20 +421,31 @@ export function App() {
 
     if (faceLandmarks) {
       const nose = faceLandmarks[1] ?? faceLandmarks[4] ?? faceLandmarks[0];
+      const leftEyeOuter = faceLandmarks[33];
+      const rightEyeOuter = faceLandmarks[263];
+      const leftCheek = faceLandmarks[234];
+      const rightCheek = faceLandmarks[454];
       const mouthTop = faceLandmarks[13];
       const mouthBottom = faceLandmarks[14];
+      const faceWidth = leftCheek && rightCheek ? Math.abs(rightCheek.x - leftCheek.x) : 0.28;
+      const roll =
+        leftEyeOuter && rightEyeOuter ? Math.atan2(rightEyeOuter.y - leftEyeOuter.y, rightEyeOuter.x - leftEyeOuter.x) : 0;
       const mouthDistance = mouthTop && mouthBottom ? clamp((mouthBottom.y - mouthTop.y) * 18, 0, 1) : 0;
       const smileScore = Math.max(score("mouthSmileLeft"), score("mouthSmileRight"), score("mouthDimpleLeft"));
       const blinkScore = Math.max(score("eyeBlinkLeft"), score("eyeBlinkRight"));
+      const browScore = Math.max(score("browInnerUp"), score("browOuterUpLeft"), score("browOuterUpRight"));
 
       faceScore = 1;
       nextMotion = {
         ...nextMotion,
-        x: clamp((0.5 - nose.x) * 2.6),
-        y: clamp((nose.y - 0.44) * 2.4),
+        x: clamp((0.5 - nose.x) * 2.2),
+        y: clamp((nose.y - 0.44) * 2.1),
+        roll: clamp(roll * 2.1, -0.5, 0.5),
+        lean: clamp((0.28 - faceWidth) * 3.2, -0.45, 0.55),
+        proximity: clamp((faceWidth - 0.18) * 3.6, 0, 1),
         smile: clamp(0.2 + smileScore * 0.9 + mouthDistance * 0.35 + expressionBoost, 0.08, 1),
         blink: expression === "blink" ? 1 : clamp(blinkScore * 1.4, 0, 1),
-        mouth: clamp(mouthDistance + score("jawOpen") * 0.7, 0, 1)
+        mouth: clamp(mouthDistance + score("jawOpen") * 0.7 + browScore * 0.08, 0, 1)
       };
     }
 
@@ -435,10 +468,12 @@ export function App() {
       };
     }
 
+    const smoothed = smoothMotion(smoothedMotionRef.current, nextMotion, faceLandmarks ? 0.38 : 0.24);
+    smoothedMotionRef.current = smoothed;
     setFaceConfidence(faceScore);
     setHandConfidence(handLandmarks ? handScore : 0);
     setTrackingStrength(clamp(faceScore * 0.72 + handScore * 0.28, 0, 1));
-    setMotion(nextMotion);
+    setMotion(smoothed);
   }
 
   function trackCameraMotionFallback() {
@@ -495,38 +530,26 @@ export function App() {
         const cameraHand = centerY < height * 0.45 && strength > 0.18 ? 0.96 : Math.max(0.18, strength * 1.4);
 
         setTrackingStrength(strength);
-        setMotion({
+        const nextMotion = {
           x: clamp(x),
           y: clamp(y),
+          roll: clamp(x * 0.22, -0.35, 0.35),
+          lean: clamp(strength * 0.28, 0, 0.5),
+          proximity: clamp(strength * 1.6, 0.1, 1),
           smile: clamp(0.42 + expressionBoost + strength * 0.3, 0.12, 0.95),
           blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
           hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.72 : cameraHand,
           mouth: clamp(strength * 0.75, 0.08, 0.75),
           touchX: clamp(x * 0.8),
           touchY: clamp(y * 0.8)
-        });
+        };
+        const smoothed = smoothMotion(smoothedMotionRef.current, nextMotion, 0.28);
+        smoothedMotionRef.current = smoothed;
+        setMotion(smoothed);
       }
     }
 
     previousFrameRef.current = new Uint8ClampedArray(frame);
-  }
-
-  function updateMotionFromPointer(clientX: number, clientY: number, target: HTMLElement) {
-    const rect = target.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width - 0.5) * 2;
-    const y = ((clientY - rect.top) / rect.height - 0.5) * 2;
-    const expressionBoost = expression === "smile" ? 0.35 : expression === "serious" ? -0.18 : 0;
-
-    setMotion({
-      x: clamp(x),
-      y: clamp(y),
-      smile: clamp(0.45 + expressionBoost - y * 0.12, 0.12, 0.95),
-      blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.96 ? 1 : 0),
-      hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.7 : clamp(0.3 - y * 0.25, 0.12, 0.85),
-      mouth: clamp(0.18 - y * 0.14, 0.06, 0.72),
-      touchX: clamp(x),
-      touchY: clamp(y)
-    });
   }
 
   function loadReferenceImage(file: File | undefined) {
@@ -729,10 +752,7 @@ export function App() {
                   <small>Use your own photo, a fictional character, or a licensed reference.</small>
                 </label>
 
-                <div
-                  className="camera-stage"
-                  onPointerMove={(event) => updateMotionFromPointer(event.clientX, event.clientY, event.currentTarget)}
-                >
+                <div className="camera-stage">
                   <video autoPlay muted playsInline ref={videoRef} />
                   <canvas className="tracking-canvas" ref={canvasRef} />
                   {!liveEnabled && (
@@ -906,66 +926,93 @@ export function App() {
                     <div
                       className="photo-puppet"
                       style={{
-                        transform: `translate(${delayedMotion.x * 28 * motionIntensity}px, ${
-                          delayedMotion.y * 18 * motionIntensity
-                        }px) rotate(${delayedMotion.x * 4 * motionIntensity}deg) scale(${puppetZoom})`
+                        transform: `translate3d(${delayedMotion.x * 26 * motionIntensity}px, ${
+                          delayedMotion.y * 16 * motionIntensity
+                        }px, 0) rotateX(${delayedMotion.y * -2.8 * motionIntensity}deg) rotateY(${
+                          delayedMotion.x * 5.4 * motionIntensity
+                        }deg) rotateZ(${(delayedMotion.roll * 12 + delayedMotion.x * 1.2) * motionIntensity}deg) scale(${
+                          puppetZoom + delayedMotion.proximity * 0.025
+                        })`
                       }}
                     >
                       <img alt="Live photo puppet output" className="puppet-base" src={referenceImage} />
                       <div
+                        className="puppet-depth-shadow"
+                        style={{
+                          transform: `translate(${delayedMotion.x * -18 * motionIntensity}px, ${
+                            delayedMotion.y * -12 * motionIntensity
+                          }px) scale(${1 + delayedMotion.proximity * 0.04})`
+                        }}
+                      />
+                      <div
                         className="puppet-layer puppet-body"
                         style={{
                           backgroundImage: `url(${referenceImage})`,
-                          transform: `translate(${delayedMotion.x * -10 * motionIntensity}px, ${
-                            delayedMotion.y * 10 * motionIntensity
-                          }px) rotate(${delayedMotion.x * -2}deg)`
+                          transform: `translate3d(${delayedMotion.x * -8 * motionIntensity}px, ${
+                            (delayedMotion.y * 8 + delayedMotion.lean * 8) * motionIntensity
+                          }px, 0) rotateZ(${(delayedMotion.roll * 5 - delayedMotion.x * 1.6) * motionIntensity}deg) scale(${
+                            1 + delayedMotion.proximity * 0.018
+                          })`
                         }}
                       />
                       <div
                         className="puppet-layer puppet-hair"
                         style={{
                           backgroundImage: `url(${referenceImage})`,
-                          transform: `translate(${delayedMotion.x * 14 * motionIntensity}px, ${
-                            (delayedMotion.y * 8 - delayedMotion.hand * 8) * motionIntensity
-                          }px) rotate(${(delayedMotion.x * 3.5 + delayedMotion.touchX * delayedMotion.hand * 2) * motionIntensity}deg)`
+                          transform: `translate3d(${delayedMotion.x * 11 * motionIntensity}px, ${
+                            (delayedMotion.y * 6 - handConfidence * 9) * motionIntensity
+                          }px, 0) rotateZ(${(delayedMotion.roll * 9 + delayedMotion.touchX * handConfidence * 2.5) * motionIntensity}deg) scale(${
+                            1 + delayedMotion.proximity * 0.012
+                          })`
                         }}
                       />
                       <div
                         className="puppet-layer puppet-face"
                         style={{
                           backgroundImage: `url(${referenceImage})`,
-                          transform: `translate(${delayedMotion.x * 18 * motionIntensity}px, ${
-                            delayedMotion.y * 12 * motionIntensity
-                          }px) rotate(${delayedMotion.x * 3 * motionIntensity}deg) scale(${
-                            1 + delayedMotion.smile * 0.018
-                          })`
+                          transform: `translate3d(${delayedMotion.x * 14 * motionIntensity}px, ${
+                            delayedMotion.y * 9 * motionIntensity
+                          }px, 0) rotateZ(${(delayedMotion.roll * 8 + delayedMotion.x * 1.3) * motionIntensity}deg) scaleX(${
+                            1 + delayedMotion.smile * 0.024 - delayedMotion.mouth * 0.01
+                          }) scaleY(${1 + delayedMotion.mouth * 0.018})`
                         }}
                       />
                       <div
                         className="puppet-layer puppet-cheek left"
                         style={{
                           backgroundImage: `url(${referenceImage})`,
-                          transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
-                            delayedMotion.y * 6 * motionIntensity
-                          }px) scale(${1 + delayedMotion.smile * 0.04})`
+                          transform: `translate3d(${(delayedMotion.x * 8 - delayedMotion.smile * 4) * motionIntensity}px, ${
+                            (delayedMotion.y * 5 + delayedMotion.mouth * 3) * motionIntensity
+                          }px, 0) scale(${1 + delayedMotion.smile * 0.035 + delayedMotion.mouth * 0.025})`
                         }}
                       />
                       <div
                         className="puppet-layer puppet-cheek right"
                         style={{
                           backgroundImage: `url(${referenceImage})`,
-                          transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
-                            delayedMotion.y * 6 * motionIntensity
-                          }px) scale(${1 + delayedMotion.smile * 0.04})`
+                          transform: `translate3d(${(delayedMotion.x * 8 + delayedMotion.smile * 4) * motionIntensity}px, ${
+                            (delayedMotion.y * 5 + delayedMotion.mouth * 3) * motionIntensity
+                          }px, 0) scale(${1 + delayedMotion.smile * 0.035 + delayedMotion.mouth * 0.025})`
+                        }}
+                      />
+                      <div
+                        className="puppet-layer puppet-jaw"
+                        style={{
+                          backgroundImage: `url(${referenceImage})`,
+                          transform: `translate3d(${delayedMotion.x * 10 * motionIntensity}px, ${
+                            (delayedMotion.y * 8 + delayedMotion.mouth * 12) * motionIntensity
+                          }px, 0) scaleY(${1 + delayedMotion.mouth * 0.04})`
                         }}
                       />
                       <div
                         className="puppet-mouth-live"
                         style={{
-                          opacity: 0.18 + delayedMotion.mouth * 0.72,
-                          transform: `translate(${delayedMotion.x * 8 * motionIntensity}px, ${
-                            (delayedMotion.y * 7 + delayedMotion.mouth * 10) * motionIntensity
-                          }px) scaleX(${0.72 + delayedMotion.smile * 0.38}) scaleY(${0.35 + delayedMotion.mouth * 1.25})`
+                          opacity: Math.max(0, delayedMotion.mouth - 0.08) * 0.42,
+                          transform: `translate3d(${delayedMotion.x * 7 * motionIntensity}px, ${
+                            (delayedMotion.y * 6 + delayedMotion.mouth * 9) * motionIntensity
+                          }px, 0) rotateZ(${delayedMotion.roll * 5}deg) scaleX(${
+                            0.8 + delayedMotion.smile * 0.28
+                          }) scaleY(${0.22 + delayedMotion.mouth * 0.88})`
                         }}
                       />
                       <div
@@ -987,7 +1034,7 @@ export function App() {
                       <div
                         className="touch-ripple"
                         style={{
-                          opacity: delayedMotion.hand > 0.25 ? Math.min(0.85, delayedMotion.hand) : 0,
+                          opacity: handConfidence > 0.28 ? Math.min(0.38, delayedMotion.hand * 0.42) : 0,
                           left: `${50 - delayedMotion.touchX * 28}%`,
                           top: `${50 + delayedMotion.touchY * 30}%`
                         }}
@@ -995,7 +1042,7 @@ export function App() {
                       <div
                         className={`photo-hand-cue ${handGesture}`}
                         style={{
-                          opacity: Math.min(1, delayedMotion.hand + 0.15),
+                          opacity: handConfidence > 0.3 || handGesture !== "idle" ? Math.min(0.86, delayedMotion.hand) : 0,
                           transform: `translate(${delayedMotion.touchX * -120}px, ${
                             delayedMotion.touchY * 100 + 70 - delayedMotion.hand * 122
                           }px) rotate(${
