@@ -20,6 +20,20 @@ type MotionState = {
   smile: number;
   blink: number;
   hand: number;
+  mouth: number;
+  touchX: number;
+  touchY: number;
+};
+
+type LandmarkPoint = {
+  x: number;
+  y: number;
+  z?: number;
+};
+
+type BlendshapeCategory = {
+  categoryName: string;
+  score: number;
 };
 
 const modes: Array<{ id: GenerationMode; label: string; icon: LucideIcon }> = [
@@ -70,8 +84,14 @@ const defaultMotion: MotionState = {
   y: 0,
   smile: 0.45,
   blink: 0,
-  hand: 0.25
+  hand: 0.25,
+  mouth: 0.12,
+  touchX: 0.38,
+  touchY: -0.15
 };
+
+const clamp = (value: number, min = -1, max = 1) => Math.max(min, Math.min(max, value));
+const mediapipeVersion = "0.10.35";
 
 export function App() {
   const [mode, setMode] = useState<GenerationMode>("image");
@@ -94,6 +114,11 @@ export function App() {
   const [referenceImage, setReferenceImage] = useState("");
   const [cameraDrivenGestures, setCameraDrivenGestures] = useState(true);
   const [trackingStrength, setTrackingStrength] = useState(0);
+  const [trackingMode, setTrackingMode] = useState<"landmarks" | "motion">("landmarks");
+  const [trackingReady, setTrackingReady] = useState(false);
+  const [trackingLabel, setTrackingLabel] = useState("landmark engine idle");
+  const [faceConfidence, setFaceConfidence] = useState(0);
+  const [handConfidence, setHandConfidence] = useState(0);
   const [motion, setMotion] = useState<MotionState>(defaultMotion);
   const [delayedMotion, setDelayedMotion] = useState<MotionState>(defaultMotion);
   const [consentConfirmed, setConsentConfirmed] = useState(true);
@@ -105,6 +130,8 @@ export function App() {
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const faceLandmarkerRef = useRef<any>(null);
+  const handLandmarkerRef = useRef<any>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -139,14 +166,14 @@ export function App() {
       return;
     }
 
-    animationFrameRef.current = window.requestAnimationFrame(trackCameraMotion);
+    animationFrameRef.current = window.requestAnimationFrame(trackCameraFrame);
 
     return () => {
       if (animationFrameRef.current) {
         window.cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [cameraDrivenGestures, expression, handGesture, liveEnabled]);
+  }, [cameraDrivenGestures, expression, handGesture, liveEnabled, trackingMode, trackingReady]);
 
   useEffect(() => {
     return () => stopCamera();
@@ -258,6 +285,7 @@ export function App() {
 
   async function startCamera() {
     setCameraError("");
+    setTrackingLabel("requesting camera");
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -267,9 +295,14 @@ export function App() {
         videoRef.current.srcObject = stream;
       }
 
+      if (trackingMode === "landmarks") {
+        await initializeLandmarkTracking();
+      }
+
       setLiveEnabled(true);
     } catch {
       setCameraError("Camera permission is needed for the real-time preview.");
+      setTrackingLabel("camera blocked");
       setLiveEnabled(false);
     }
   }
@@ -285,14 +318,134 @@ export function App() {
     streamRef.current = null;
     setLiveEnabled(false);
     setTrackingStrength(0);
+    setFaceConfidence(0);
+    setHandConfidence(0);
+    setTrackingLabel(trackingReady ? "landmark engine ready" : "landmark engine idle");
   }
 
-  function trackCameraMotion() {
+  async function initializeLandmarkTracking() {
+    if (faceLandmarkerRef.current && handLandmarkerRef.current) {
+      setTrackingReady(true);
+      setTrackingLabel("landmark tracking");
+      return true;
+    }
+
+    try {
+      setTrackingLabel("loading face and hand tracker");
+      const { FaceLandmarker, FilesetResolver, HandLandmarker } = await import("@mediapipe/tasks-vision");
+      const vision = await FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${mediapipeVersion}/wasm`);
+
+      faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+        },
+        numFaces: 1,
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+        runningMode: "VIDEO"
+      });
+
+      handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+        },
+        numHands: 2,
+        runningMode: "VIDEO"
+      });
+
+      setTrackingReady(true);
+      setTrackingLabel("landmark tracking");
+      return true;
+    } catch {
+      setTrackingMode("motion");
+      setTrackingReady(false);
+      setTrackingLabel("motion fallback");
+      return false;
+    }
+  }
+
+  function trackCameraFrame() {
+    if (trackingMode === "landmarks" && trackingReady && faceLandmarkerRef.current) {
+      trackLandmarkFrame();
+      animationFrameRef.current = window.requestAnimationFrame(trackCameraFrame);
+      return;
+    }
+
+    trackCameraMotionFallback();
+    animationFrameRef.current = window.requestAnimationFrame(trackCameraFrame);
+  }
+
+  function trackLandmarkFrame() {
+    const video = videoRef.current;
+
+    if (!video || video.readyState < 2) {
+      return;
+    }
+
+    const now = performance.now();
+    const faceResult = faceLandmarkerRef.current.detectForVideo(video, now);
+    const handResult = handLandmarkerRef.current?.detectForVideo(video, now);
+    const faceLandmarks = faceResult.faceLandmarks?.[0] as LandmarkPoint[] | undefined;
+    const handLandmarks = handResult?.landmarks?.[0] as LandmarkPoint[] | undefined;
+    const categories = (faceResult.faceBlendshapes?.[0]?.categories ?? []) as BlendshapeCategory[];
+    const score = (name: string) => categories.find((item) => item.categoryName === name)?.score ?? 0;
+
+    const expressionBoost = expression === "smile" ? 0.28 : expression === "serious" ? -0.16 : 0;
+    let nextMotion = motion;
+    let faceScore = 0;
+    let handScore = Math.max(0, motion.hand * 0.86);
+
+    if (faceLandmarks) {
+      const nose = faceLandmarks[1] ?? faceLandmarks[4] ?? faceLandmarks[0];
+      const mouthTop = faceLandmarks[13];
+      const mouthBottom = faceLandmarks[14];
+      const mouthDistance = mouthTop && mouthBottom ? clamp((mouthBottom.y - mouthTop.y) * 18, 0, 1) : 0;
+      const smileScore = Math.max(score("mouthSmileLeft"), score("mouthSmileRight"), score("mouthDimpleLeft"));
+      const blinkScore = Math.max(score("eyeBlinkLeft"), score("eyeBlinkRight"));
+
+      faceScore = 1;
+      nextMotion = {
+        ...nextMotion,
+        x: clamp((0.5 - nose.x) * 2.6),
+        y: clamp((nose.y - 0.44) * 2.4),
+        smile: clamp(0.2 + smileScore * 0.9 + mouthDistance * 0.35 + expressionBoost, 0.08, 1),
+        blink: expression === "blink" ? 1 : clamp(blinkScore * 1.4, 0, 1),
+        mouth: clamp(mouthDistance + score("jawOpen") * 0.7, 0, 1)
+      };
+    }
+
+    if (handLandmarks) {
+      const wrist = handLandmarks[0];
+      const indexTip = handLandmarks[8] ?? wrist;
+      const middleTip = handLandmarks[12] ?? indexTip;
+      const highestFinger = Math.min(indexTip.y, middleTip.y, wrist.y);
+      handScore = clamp((0.82 - highestFinger) * 2.4, 0.1, 1);
+      nextMotion = {
+        ...nextMotion,
+        hand: handGesture === "wave" ? Math.max(0.92, handScore) : handGesture === "point" ? 0.86 : handScore,
+        touchX: clamp((0.5 - indexTip.x) * 2),
+        touchY: clamp((indexTip.y - 0.5) * 2)
+      };
+    } else {
+      nextMotion = {
+        ...nextMotion,
+        hand: handGesture === "wave" ? 0.92 : handGesture === "point" ? 0.78 : Math.max(0.05, nextMotion.hand * 0.9)
+      };
+    }
+
+    setFaceConfidence(faceScore);
+    setHandConfidence(handLandmarks ? handScore : 0);
+    setTrackingStrength(clamp(faceScore * 0.72 + handScore * 0.28, 0, 1));
+    setMotion(nextMotion);
+  }
+
+  function trackCameraMotionFallback() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
     if (!video || !canvas || video.readyState < 2) {
-      animationFrameRef.current = window.requestAnimationFrame(trackCameraMotion);
       return;
     }
 
@@ -343,17 +496,19 @@ export function App() {
 
         setTrackingStrength(strength);
         setMotion({
-          x: Math.max(-1, Math.min(1, x)),
-          y: Math.max(-1, Math.min(1, y)),
-          smile: Math.max(0.12, Math.min(0.95, 0.42 + expressionBoost + strength * 0.3)),
+          x: clamp(x),
+          y: clamp(y),
+          smile: clamp(0.42 + expressionBoost + strength * 0.3, 0.12, 0.95),
           blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
-          hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.72 : cameraHand
+          hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.72 : cameraHand,
+          mouth: clamp(strength * 0.75, 0.08, 0.75),
+          touchX: clamp(x * 0.8),
+          touchY: clamp(y * 0.8)
         });
       }
     }
 
     previousFrameRef.current = new Uint8ClampedArray(frame);
-    animationFrameRef.current = window.requestAnimationFrame(trackCameraMotion);
   }
 
   function updateMotionFromPointer(clientX: number, clientY: number, target: HTMLElement) {
@@ -363,11 +518,14 @@ export function App() {
     const expressionBoost = expression === "smile" ? 0.35 : expression === "serious" ? -0.18 : 0;
 
     setMotion({
-      x: Math.max(-1, Math.min(1, x)),
-      y: Math.max(-1, Math.min(1, y)),
-      smile: Math.max(0.12, Math.min(0.95, 0.45 + expressionBoost - y * 0.12)),
+      x: clamp(x),
+      y: clamp(y),
+      smile: clamp(0.45 + expressionBoost - y * 0.12, 0.12, 0.95),
       blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.96 ? 1 : 0),
-      hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.7 : Math.max(0.12, Math.min(0.85, 0.3 - y * 0.25))
+      hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.7 : clamp(0.3 - y * 0.25, 0.12, 0.85),
+      mouth: clamp(0.18 - y * 0.14, 0.06, 0.72),
+      touchX: clamp(x),
+      touchY: clamp(y)
     });
   }
 
@@ -379,6 +537,8 @@ export function App() {
     const reader = new FileReader();
     reader.addEventListener("load", () => {
       setReferenceImage(typeof reader.result === "string" ? reader.result : "");
+      setFictionalIdentity("uploaded");
+      setAvatarStyle("photo");
     });
     reader.readAsDataURL(file);
   }
@@ -584,9 +744,10 @@ export function App() {
                   <div className="tracking-hud">
                     <span>
                       <Radio size={14} />
-                      {liveEnabled ? (cameraDrivenGestures ? "camera tracking" : "manual tracking") : "standby"}
+                      {liveEnabled ? (cameraDrivenGestures ? trackingLabel : "manual tracking") : "standby"}
                     </span>
-                    <span>{Math.round(trackingStrength * 100)}% motion</span>
+                    <span>face {Math.round(faceConfidence * 100)}%</span>
+                    <span>hand {Math.round(handConfidence * 100)}%</span>
                   </div>
                 </div>
 
@@ -601,6 +762,14 @@ export function App() {
                   </label>
 
                   <label className="field">
+                    Tracking engine
+                    <select value={trackingMode} onChange={(event) => setTrackingMode(event.target.value as "landmarks" | "motion")}>
+                      <option value="landmarks">Real face + hand landmarks</option>
+                      <option value="motion">Simple motion fallback</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
                     Identity source
                     <select value={fictionalIdentity} onChange={(event) => setFictionalIdentity(event.target.value)}>
                       <option value="generated">AI-generated character</option>
@@ -612,7 +781,7 @@ export function App() {
                   <label className="field">
                     Output mode
                     <select value={avatarStyle} onChange={(event) => setAvatarStyle(event.target.value)}>
-                      <option value="photo">Live photo puppet</option>
+                      <option value="photo">Real-time photo puppet</option>
                       <option value="portrait">Portrait close-up</option>
                       <option value="fullbody">Full body motion</option>
                       <option value="cinematic">Fallback generated avatar</option>
@@ -689,14 +858,14 @@ export function App() {
                 {mode === "audio"
                   ? "Drop audio file or record from the browser"
                   : mode === "realtime"
-                    ? "Real-time sessions can be recorded or streamed later"
+                    ? "Live puppet sessions can be recorded or streamed later"
                     : "Drop source image or training photos here"}
               </span>
               <small>
                 {mode === "audio"
                   ? "Audio upload and recording flow is scaffolded for MP3/WAV."
                   : mode === "realtime"
-                    ? "This preview uses browser camera input and a delayed avatar render."
+                    ? "This preview uses local browser face and hand landmarks with no artificial delay."
                     : "Upload endpoint is scaffolded for S3 signed URLs."}
               </small>
             </div>
@@ -757,8 +926,8 @@ export function App() {
                         style={{
                           backgroundImage: `url(${referenceImage})`,
                           transform: `translate(${delayedMotion.x * 14 * motionIntensity}px, ${
-                            delayedMotion.y * 8 * motionIntensity
-                          }px) rotate(${delayedMotion.x * 3.5 * motionIntensity}deg)`
+                            (delayedMotion.y * 8 - delayedMotion.hand * 8) * motionIntensity
+                          }px) rotate(${(delayedMotion.x * 3.5 + delayedMotion.touchX * delayedMotion.hand * 2) * motionIntensity}deg)`
                         }}
                       />
                       <div
@@ -791,6 +960,23 @@ export function App() {
                         }}
                       />
                       <div
+                        className="puppet-mouth-live"
+                        style={{
+                          opacity: 0.18 + delayedMotion.mouth * 0.72,
+                          transform: `translate(${delayedMotion.x * 8 * motionIntensity}px, ${
+                            (delayedMotion.y * 7 + delayedMotion.mouth * 10) * motionIntensity
+                          }px) scaleX(${0.72 + delayedMotion.smile * 0.38}) scaleY(${0.35 + delayedMotion.mouth * 1.25})`
+                        }}
+                      />
+                      <div
+                        className="puppet-blink-mask left"
+                        style={{ opacity: delayedMotion.blink, transform: `translateY(${delayedMotion.y * 4}px)` }}
+                      />
+                      <div
+                        className="puppet-blink-mask right"
+                        style={{ opacity: delayedMotion.blink, transform: `translateY(${delayedMotion.y * 4}px)` }}
+                      />
+                      <div
                         className="puppet-face-focus"
                         style={{
                           transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
@@ -799,10 +985,20 @@ export function App() {
                         }}
                       />
                       <div
+                        className="touch-ripple"
+                        style={{
+                          opacity: delayedMotion.hand > 0.25 ? Math.min(0.85, delayedMotion.hand) : 0,
+                          left: `${50 - delayedMotion.touchX * 28}%`,
+                          top: `${50 + delayedMotion.touchY * 30}%`
+                        }}
+                      />
+                      <div
                         className={`photo-hand-cue ${handGesture}`}
                         style={{
                           opacity: Math.min(1, delayedMotion.hand + 0.15),
-                          transform: `translate(${delayedMotion.x * 34}px, ${70 - delayedMotion.hand * 122}px) rotate(${
+                          transform: `translate(${delayedMotion.touchX * -120}px, ${
+                            delayedMotion.touchY * 100 + 70 - delayedMotion.hand * 122
+                          }px) rotate(${
                             handGesture === "wave" ? -22 + delayedMotion.x * 20 : handGesture === "point" ? -38 : -8
                           }deg)`
                         }}
@@ -823,8 +1019,9 @@ export function App() {
                   <span>Head X {delayedMotion.x.toFixed(2)}</span>
                   <span>Head Y {delayedMotion.y.toFixed(2)}</span>
                   <span>Smile {delayedMotion.smile.toFixed(2)}</span>
+                  <span>Mouth {delayedMotion.mouth.toFixed(2)}</span>
                   <span>Hand {delayedMotion.hand.toFixed(2)}</span>
-                  <span>Motion {Math.round(trackingStrength * 100)}%</span>
+                  <span>Tracking {Math.round(trackingStrength * 100)}%</span>
                 </div>
 
                 <div className="pipeline-steps">
