@@ -1,10 +1,12 @@
 import {
   Activity,
   Camera,
+  Crosshair,
   ImagePlus,
   Images,
   Mic2,
   Radio,
+  RotateCcw,
   ScanFace,
   ShieldCheck,
   Sparkles,
@@ -12,6 +14,13 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildFaceTriangles,
+  FaceMeshRenderer,
+  type FaceConnection,
+  type FacePoint,
+  type FaceTriangle
+} from "./realtime/faceMeshRenderer";
 import { createGeneration, Generation, GenerationMode, listGenerations, VoiceOptions } from "./services/api";
 
 type MotionState = {
@@ -28,15 +37,15 @@ type MotionState = {
   touchY: number;
 };
 
-type LandmarkPoint = {
-  x: number;
-  y: number;
-  z?: number;
-};
-
 type BlendshapeCategory = {
   categoryName: string;
   score: number;
+};
+
+type TrackingSample = {
+  faceScore: number;
+  handScore: number;
+  label: string;
 };
 
 const modes: Array<{ id: GenerationMode; label: string; icon: LucideIcon }> = [
@@ -111,6 +120,26 @@ const smoothMotion = (current: MotionState, next: MotionState, amount = 0.34): M
   touchX: current.touchX + (next.touchX - current.touchX) * amount,
   touchY: current.touchY + (next.touchY - current.touchY) * amount
 });
+const cloneLandmarks = (points: FacePoint[]) => points.map((point) => ({ ...point }));
+const smoothLandmarks = (current: FacePoint[] | null, next: FacePoint[], smoothing: number) => {
+  if (!current || current.length !== next.length) {
+    return cloneLandmarks(next);
+  }
+
+  const alpha = clamp(0.9 - smoothing * 0.82, 0.08, 0.9);
+  return next.map((point, index) => {
+    const previous = current[index] ?? point;
+    const limitedX = previous.x + clamp(point.x - previous.x, -0.035, 0.035);
+    const limitedY = previous.y + clamp(point.y - previous.y, -0.035, 0.035);
+
+    return {
+      ...point,
+      x: previous.x + (limitedX - previous.x) * alpha,
+      y: previous.y + (limitedY - previous.y) * alpha,
+      z: previous.z === undefined || point.z === undefined ? point.z : previous.z + (point.z - previous.z) * alpha
+    };
+  });
+};
 
 export function App() {
   const [mode, setMode] = useState<GenerationMode>("image");
@@ -123,38 +152,100 @@ export function App() {
   const [micError, setMicError] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [cameraError, setCameraError] = useState("");
-  const [latencyMs] = useState(0);
+  const [fps, setFps] = useState(0);
+  const [frameLatencyMs, setFrameLatencyMs] = useState(0);
   const [avatarStyle, setAvatarStyle] = useState("photo");
-  const [puppetZoom, setPuppetZoom] = useState(1.08);
-  const [motionIntensity, setMotionIntensity] = useState(1.35);
+  const [puppetZoom, setPuppetZoom] = useState(1);
+  const [motionIntensity, setMotionIntensity] = useState(1);
+  const [smoothing, setSmoothing] = useState(0.68);
+  const [mouthStrength, setMouthStrength] = useState(0.9);
+  const [eyeStrength, setEyeStrength] = useState(0.82);
+  const [headRotationStrength, setHeadRotationStrength] = useState(0.72);
+  const [maskFeathering, setMaskFeathering] = useState(12);
+  const [facePositionX, setFacePositionX] = useState(0);
+  const [facePositionY, setFacePositionY] = useState(0);
   const [fictionalIdentity, setFictionalIdentity] = useState("generated");
   const [expression, setExpression] = useState("natural");
   const [handGesture, setHandGesture] = useState("idle");
   const [referenceImage, setReferenceImage] = useState("");
+  const [referenceStatus, setReferenceStatus] = useState("Upload a reference with one visible face.");
+  const [isCalibrated, setIsCalibrated] = useState(false);
   const [cameraDrivenGestures, setCameraDrivenGestures] = useState(true);
   const [trackingStrength, setTrackingStrength] = useState(0);
   const [trackingMode, setTrackingMode] = useState<"landmarks" | "motion">("landmarks");
-  const [trackingReady, setTrackingReady] = useState(false);
+  const [, setTrackingReady] = useState(false);
   const [trackingLabel, setTrackingLabel] = useState("landmark engine idle");
   const [faceConfidence, setFaceConfidence] = useState(0);
   const [handConfidence, setHandConfidence] = useState(0);
   const [motion, setMotion] = useState<MotionState>(defaultMotion);
-  const [delayedMotion, setDelayedMotion] = useState<MotionState>(defaultMotion);
   const [consentConfirmed, setConsentConfirmed] = useState(true);
   const [generations, setGenerations] = useState<Generation[]>(samples);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const loopSessionRef = useRef(0);
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const faceLandmarkerRef = useRef<any>(null);
+  const referenceLandmarkerRef = useRef<any>(null);
   const handLandmarkerRef = useRef<any>(null);
+  const trackingReadyRef = useRef(false);
+  const faceTrianglesRef = useRef<FaceTriangle[]>([]);
+  const latestFaceLandmarksRef = useRef<FacePoint[] | null>(null);
+  const smoothedFaceLandmarksRef = useRef<FacePoint[] | null>(null);
+  const neutralFaceLandmarksRef = useRef<FacePoint[] | null>(null);
+  const lostFaceFramesRef = useRef(0);
   const smoothedMotionRef = useRef<MotionState>(defaultMotion);
+  const faceRendererRef = useRef<FaceMeshRenderer | null>(null);
+  const metricsRef = useRef({
+    frameCount: 0,
+    frameWindowStartedAt: performance.now(),
+    latencyTotal: 0,
+    lastUiUpdateAt: 0
+  });
   const audioStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  if (!faceRendererRef.current) {
+    faceRendererRef.current = new FaceMeshRenderer();
+  }
+
+  const settingsRef = useRef({
+    avatarStyle,
+    cameraDrivenGestures,
+    expression,
+    eyeStrength,
+    facePositionX,
+    facePositionY,
+    handGesture,
+    headRotationStrength,
+    maskFeathering,
+    motionIntensity,
+    mouthStrength,
+    puppetZoom,
+    smoothing,
+    trackingMode
+  });
+  settingsRef.current = {
+    avatarStyle,
+    cameraDrivenGestures,
+    expression,
+    eyeStrength,
+    facePositionX,
+    facePositionY,
+    handGesture,
+    headRotationStrength,
+    maskFeathering,
+    motionIntensity,
+    mouthStrength,
+    puppetZoom,
+    smoothing,
+    trackingMode
+  };
 
   useEffect(() => {
     listGenerations()
@@ -165,38 +256,37 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (latencyMs === 0) {
-      setDelayedMotion(motion);
-      return;
-    }
-
-    const timer = window.setTimeout(() => setDelayedMotion(motion), latencyMs);
-    return () => window.clearTimeout(timer);
-  }, [latencyMs, motion]);
-
-  useEffect(() => {
     if (mode !== "realtime") {
       stopCamera();
     }
   }, [mode]);
 
   useEffect(() => {
-    if (!liveEnabled || !cameraDrivenGestures) {
-      previousFrameRef.current = null;
-      return;
-    }
-
-    animationFrameRef.current = window.requestAnimationFrame(trackCameraFrame);
-
-    return () => {
-      if (animationFrameRef.current) {
-        window.cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [cameraDrivenGestures, expression, handGesture, liveEnabled, trackingMode, trackingReady]);
+    renderFaceOutput();
+  }, [
+    avatarStyle,
+    eyeStrength,
+    facePositionX,
+    facePositionY,
+    headRotationStrength,
+    maskFeathering,
+    motionIntensity,
+    mouthStrength,
+    puppetZoom,
+    referenceImage
+  ]);
 
   useEffect(() => {
-    return () => stopCamera();
+    return () => {
+      loopSessionRef.current += 1;
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      faceLandmarkerRef.current?.close();
+      referenceLandmarkerRef.current?.close();
+      handLandmarkerRef.current?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -306,13 +396,24 @@ export function App() {
   async function startCamera() {
     setCameraError("");
     setTrackingLabel("requesting camera");
+    cancelCameraLoop();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          frameRate: { ideal: 30, max: 60 },
+          height: { ideal: 720 },
+          width: { ideal: 1280 }
+        },
+        audio: false
+      });
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        await videoRef.current.play();
       }
 
       if (trackingMode === "landmarks") {
@@ -320,6 +421,15 @@ export function App() {
       }
 
       setLiveEnabled(true);
+      setTrackingLabel(trackingMode === "landmarks" ? "acquiring face" : "motion fallback");
+      metricsRef.current = {
+        frameCount: 0,
+        frameWindowStartedAt: performance.now(),
+        latencyTotal: 0,
+        lastUiUpdateAt: 0
+      };
+      const session = ++loopSessionRef.current;
+      animationFrameRef.current = window.requestAnimationFrame(() => trackCameraFrame(session));
     } catch {
       setCameraError("Camera permission is needed for the real-time preview.");
       setTrackingLabel("camera blocked");
@@ -327,26 +437,37 @@ export function App() {
     }
   }
 
-  function stopCamera() {
-    if (animationFrameRef.current) {
+  function cancelCameraLoop() {
+    loopSessionRef.current += 1;
+    if (animationFrameRef.current !== null) {
       window.cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
+  }
 
+  function stopCamera() {
+    cancelCameraLoop();
     previousFrameRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setLiveEnabled(false);
     setTrackingStrength(0);
     setFaceConfidence(0);
     setHandConfidence(0);
+    setFps(0);
+    setFrameLatencyMs(0);
     smoothedMotionRef.current = defaultMotion;
     setMotion(defaultMotion);
-    setTrackingLabel(trackingReady ? "landmark engine ready" : "landmark engine idle");
+    setTrackingLabel(trackingReadyRef.current ? "landmark engine ready" : "landmark engine idle");
+    renderFaceOutput();
   }
 
   async function initializeLandmarkTracking() {
-    if (faceLandmarkerRef.current && handLandmarkerRef.current) {
+    if (faceLandmarkerRef.current && handLandmarkerRef.current && referenceLandmarkerRef.current) {
+      trackingReadyRef.current = true;
       setTrackingReady(true);
       setTrackingLabel("landmark tracking");
       return true;
@@ -357,30 +478,59 @@ export function App() {
       const { FaceLandmarker, FilesetResolver, HandLandmarker } = await import("@mediapipe/tasks-vision");
       const vision = await FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${mediapipeVersion}/wasm`);
 
-      faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
-        },
-        numFaces: 1,
-        outputFaceBlendshapes: true,
-        outputFacialTransformationMatrixes: true,
-        runningMode: "VIDEO"
-      });
+      if (!faceLandmarkerRef.current) {
+        faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+          },
+          minFaceDetectionConfidence: 0.55,
+          minFacePresenceConfidence: 0.55,
+          minTrackingConfidence: 0.55,
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: true,
+          runningMode: "VIDEO"
+        });
+      }
 
-      handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
-        },
-        numHands: 2,
-        runningMode: "VIDEO"
-      });
+      if (!referenceLandmarkerRef.current) {
+        referenceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+          },
+          minFaceDetectionConfidence: 0.5,
+          minFacePresenceConfidence: 0.5,
+          numFaces: 1,
+          outputFaceBlendshapes: false,
+          runningMode: "IMAGE"
+        });
+      }
 
+      if (!handLandmarkerRef.current) {
+        handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+          },
+          minHandDetectionConfidence: 0.55,
+          minHandPresenceConfidence: 0.55,
+          minTrackingConfidence: 0.55,
+          numHands: 2,
+          runningMode: "VIDEO"
+        });
+      }
+
+      faceTrianglesRef.current = buildFaceTriangles(
+        FaceLandmarker.FACE_LANDMARKS_TESSELATION as FaceConnection[]
+      );
+      trackingReadyRef.current = true;
       setTrackingReady(true);
       setTrackingLabel("landmark tracking");
       return true;
     } catch {
+      trackingReadyRef.current = false;
       setTrackingMode("motion");
       setTrackingReady(false);
       setTrackingLabel("motion fallback");
@@ -388,38 +538,68 @@ export function App() {
     }
   }
 
-  function trackCameraFrame() {
-    if (trackingMode === "landmarks" && trackingReady && faceLandmarkerRef.current) {
-      trackLandmarkFrame();
-      animationFrameRef.current = window.requestAnimationFrame(trackCameraFrame);
+  function trackCameraFrame(session: number) {
+    if (session !== loopSessionRef.current || !streamRef.current) {
       return;
     }
 
-    trackCameraMotionFallback();
-    animationFrameRef.current = window.requestAnimationFrame(trackCameraFrame);
+    const startedAt = performance.now();
+    const settings = settingsRef.current;
+    let sample: TrackingSample = {
+      faceScore: faceConfidence,
+      handScore: handConfidence,
+      label: settings.cameraDrivenGestures ? "tracking" : "manual tracking"
+    };
+
+    if (settings.cameraDrivenGestures) {
+      if (settings.trackingMode === "landmarks" && trackingReadyRef.current && faceLandmarkerRef.current) {
+        sample = trackLandmarkFrame();
+      } else {
+        sample = trackCameraMotionFallback();
+      }
+    }
+
+    renderFaceOutput();
+    updateTrackingMetrics(startedAt, sample);
+
+    if (session === loopSessionRef.current && streamRef.current) {
+      animationFrameRef.current = window.requestAnimationFrame(() => trackCameraFrame(session));
+    }
   }
 
-  function trackLandmarkFrame() {
+  function trackLandmarkFrame(): TrackingSample {
     const video = videoRef.current;
 
     if (!video || video.readyState < 2) {
-      return;
+      return { faceScore: 0, handScore: 0, label: "waiting for camera" };
     }
 
     const now = performance.now();
     const faceResult = faceLandmarkerRef.current.detectForVideo(video, now);
     const handResult = handLandmarkerRef.current?.detectForVideo(video, now);
-    const faceLandmarks = faceResult.faceLandmarks?.[0] as LandmarkPoint[] | undefined;
-    const handLandmarks = handResult?.landmarks?.[0] as LandmarkPoint[] | undefined;
+    const faceLandmarks = faceResult.faceLandmarks?.[0] as FacePoint[] | undefined;
+    const handLandmarks = handResult?.landmarks?.[0] as FacePoint[] | undefined;
     const categories = (faceResult.faceBlendshapes?.[0]?.categories ?? []) as BlendshapeCategory[];
     const score = (name: string) => categories.find((item) => item.categoryName === name)?.score ?? 0;
-
-    const expressionBoost = expression === "smile" ? 0.28 : expression === "serious" ? -0.16 : 0;
-    let nextMotion = motion;
+    const settings = settingsRef.current;
+    const expressionBoost = settings.expression === "smile" ? 0.28 : settings.expression === "serious" ? -0.16 : 0;
+    let nextMotion = smoothedMotionRef.current;
     let faceScore = 0;
-    let handScore = Math.max(0, motion.hand * 0.86);
+    let handScore = Math.max(0, nextMotion.hand * 0.86);
+    let label = "face lost";
 
     if (faceLandmarks) {
+      lostFaceFramesRef.current = 0;
+      latestFaceLandmarksRef.current = cloneLandmarks(faceLandmarks);
+      const smoothedLandmarks = smoothLandmarks(smoothedFaceLandmarksRef.current, faceLandmarks, settings.smoothing);
+      smoothedFaceLandmarksRef.current = smoothedLandmarks;
+
+      const hadCalibration = Boolean(neutralFaceLandmarksRef.current);
+      if (!hadCalibration) {
+        neutralFaceLandmarksRef.current = cloneLandmarks(smoothedLandmarks);
+        setIsCalibrated(true);
+      }
+
       const nose = faceLandmarks[1] ?? faceLandmarks[4] ?? faceLandmarks[0];
       const leftEyeOuter = faceLandmarks[33];
       const rightEyeOuter = faceLandmarks[263];
@@ -434,8 +614,15 @@ export function App() {
       const smileScore = Math.max(score("mouthSmileLeft"), score("mouthSmileRight"), score("mouthDimpleLeft"));
       const blinkScore = Math.max(score("eyeBlinkLeft"), score("eyeBlinkRight"));
       const browScore = Math.max(score("browInnerUp"), score("browOuterUpLeft"), score("browOuterUpRight"));
+      const landmarkConfidence = faceLandmarks
+        .map((point) => point.presence ?? point.visibility)
+        .filter((value): value is number => typeof value === "number");
 
-      faceScore = 1;
+      faceScore =
+        landmarkConfidence.length > 0
+          ? landmarkConfidence.reduce((total, value) => total + value, 0) / landmarkConfidence.length
+          : 1;
+      label = hadCalibration ? "tracking locked" : "auto calibrated";
       nextMotion = {
         ...nextMotion,
         x: clamp((0.5 - nose.x) * 2.2),
@@ -444,9 +631,22 @@ export function App() {
         lean: clamp((0.28 - faceWidth) * 3.2, -0.45, 0.55),
         proximity: clamp((faceWidth - 0.18) * 3.6, 0, 1),
         smile: clamp(0.2 + smileScore * 0.9 + mouthDistance * 0.35 + expressionBoost, 0.08, 1),
-        blink: expression === "blink" ? 1 : clamp(blinkScore * 1.4, 0, 1),
+        blink: settings.expression === "blink" ? 1 : clamp(blinkScore * 1.4, 0, 1),
         mouth: clamp(mouthDistance + score("jawOpen") * 0.7 + browScore * 0.08, 0, 1)
       };
+    } else {
+      lostFaceFramesRef.current += 1;
+      latestFaceLandmarksRef.current = null;
+      faceScore = clamp(1 - lostFaceFramesRef.current / 14, 0, 1);
+      label = lostFaceFramesRef.current < 5 ? "reacquiring face" : "face lost";
+
+      if (smoothedFaceLandmarksRef.current && neutralFaceLandmarksRef.current) {
+        smoothedFaceLandmarksRef.current = smoothLandmarks(
+          smoothedFaceLandmarksRef.current,
+          neutralFaceLandmarksRef.current,
+          0.92
+        );
+      }
     }
 
     if (handLandmarks) {
@@ -457,31 +657,41 @@ export function App() {
       handScore = clamp((0.82 - highestFinger) * 2.4, 0.1, 1);
       nextMotion = {
         ...nextMotion,
-        hand: handGesture === "wave" ? Math.max(0.92, handScore) : handGesture === "point" ? 0.86 : handScore,
+        hand:
+          settings.handGesture === "wave" ? Math.max(0.92, handScore) : settings.handGesture === "point" ? 0.86 : handScore,
         touchX: clamp((0.5 - indexTip.x) * 2),
         touchY: clamp((indexTip.y - 0.5) * 2)
       };
     } else {
       nextMotion = {
         ...nextMotion,
-        hand: handGesture === "wave" ? 0.92 : handGesture === "point" ? 0.78 : Math.max(0.05, nextMotion.hand * 0.9)
+        hand:
+          settings.handGesture === "wave"
+            ? 0.92
+            : settings.handGesture === "point"
+              ? 0.78
+              : Math.max(0.05, nextMotion.hand * 0.9)
       };
     }
 
-    const smoothed = smoothMotion(smoothedMotionRef.current, nextMotion, faceLandmarks ? 0.38 : 0.24);
+    const motionAlpha = clamp(0.72 - settings.smoothing * 0.58, 0.12, 0.52);
+    const smoothed = smoothMotion(smoothedMotionRef.current, nextMotion, faceLandmarks ? motionAlpha : 0.12);
     smoothedMotionRef.current = smoothed;
-    setFaceConfidence(faceScore);
-    setHandConfidence(handLandmarks ? handScore : 0);
-    setTrackingStrength(clamp(faceScore * 0.72 + handScore * 0.28, 0, 1));
     setMotion(smoothed);
+
+    return {
+      faceScore,
+      handScore: handLandmarks ? handScore : 0,
+      label
+    };
   }
 
-  function trackCameraMotionFallback() {
+  function trackCameraMotionFallback(): TrackingSample {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
     if (!video || !canvas || video.readyState < 2) {
-      return;
+      return { faceScore: 0, handScore: 0, label: "waiting for camera" };
     }
 
     const width = 96;
@@ -489,11 +699,12 @@ export function App() {
     const context = canvas.getContext("2d", { willReadFrequently: true });
 
     if (!context) {
-      return;
+      return { faceScore: 0, handScore: 0, label: "motion fallback unavailable" };
     }
 
     canvas.width = width;
     canvas.height = height;
+    context.clearRect(0, 0, width, height);
     context.drawImage(video, 0, 0, width, height);
 
     const frame = context.getImageData(0, 0, width, height).data;
@@ -526,10 +737,10 @@ export function App() {
         const x = (centerX / width - 0.5) * -2;
         const y = (centerY / height - 0.5) * 2;
         const strength = Math.min(1, total / 540000);
-        const expressionBoost = expression === "smile" ? 0.34 : expression === "serious" ? -0.18 : 0;
+        const settings = settingsRef.current;
+        const expressionBoost = settings.expression === "smile" ? 0.34 : settings.expression === "serious" ? -0.18 : 0;
         const cameraHand = centerY < height * 0.45 && strength > 0.18 ? 0.96 : Math.max(0.18, strength * 1.4);
 
-        setTrackingStrength(strength);
         const nextMotion = {
           x: clamp(x),
           y: clamp(y),
@@ -537,8 +748,8 @@ export function App() {
           lean: clamp(strength * 0.28, 0, 0.5),
           proximity: clamp(strength * 1.6, 0.1, 1),
           smile: clamp(0.42 + expressionBoost + strength * 0.3, 0.12, 0.95),
-          blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
-          hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.72 : cameraHand,
+          blink: settings.expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
+          hand: settings.handGesture === "wave" ? 0.95 : settings.handGesture === "point" ? 0.72 : cameraHand,
           mouth: clamp(strength * 0.75, 0.08, 0.75),
           touchX: clamp(x * 0.8),
           touchY: clamp(y * 0.8)
@@ -550,6 +761,102 @@ export function App() {
     }
 
     previousFrameRef.current = new Uint8ClampedArray(frame);
+    return {
+      faceScore: Math.min(0.62, trackingStrength),
+      handScore: Math.min(0.55, smoothedMotionRef.current.hand),
+      label: "motion fallback"
+    };
+  }
+
+  function renderFaceOutput() {
+    const output = outputCanvasRef.current;
+    if (!output) {
+      return;
+    }
+
+    const settings = settingsRef.current;
+    faceRendererRef.current?.render(
+      output,
+      smoothedFaceLandmarksRef.current ?? neutralFaceLandmarksRef.current,
+      neutralFaceLandmarksRef.current,
+      {
+        eyeStrength: settings.eyeStrength,
+        facePositionX: settings.facePositionX,
+        facePositionY: settings.facePositionY,
+        faceScale: settings.puppetZoom,
+        fit: settings.avatarStyle === "fullbody" ? "contain" : "cover",
+        headRotationStrength: settings.headRotationStrength,
+        maskFeathering: settings.maskFeathering,
+        motionStrength: settings.motionIntensity,
+        mouthStrength: settings.mouthStrength
+      }
+    );
+  }
+
+  function updateTrackingMetrics(startedAt: number, sample: TrackingSample) {
+    const now = performance.now();
+    const metrics = metricsRef.current;
+    metrics.frameCount += 1;
+    metrics.latencyTotal += now - startedAt;
+
+    if (now - metrics.lastUiUpdateAt < 350) {
+      return;
+    }
+
+    const elapsed = Math.max(1, now - metrics.frameWindowStartedAt);
+    setFps((metrics.frameCount * 1000) / elapsed);
+    setFrameLatencyMs(metrics.latencyTotal / metrics.frameCount);
+    setFaceConfidence(sample.faceScore);
+    setHandConfidence(sample.handScore);
+    setTrackingStrength(clamp(sample.faceScore * 0.8 + sample.handScore * 0.2, 0, 1));
+    setTrackingLabel(sample.label);
+    metrics.frameCount = 0;
+    metrics.latencyTotal = 0;
+    metrics.frameWindowStartedAt = now;
+    metrics.lastUiUpdateAt = now;
+  }
+
+  function calibrateFace() {
+    const latest = latestFaceLandmarksRef.current;
+    if (!latest) {
+      setCameraError("Keep one face visible and still before calibrating.");
+      return;
+    }
+
+    neutralFaceLandmarksRef.current = cloneLandmarks(latest);
+    smoothedFaceLandmarksRef.current = cloneLandmarks(latest);
+    setIsCalibrated(true);
+    setCameraError("");
+    setTrackingLabel("neutral pose calibrated");
+    renderFaceOutput();
+  }
+
+  function resetCalibration() {
+    neutralFaceLandmarksRef.current = null;
+    smoothedFaceLandmarksRef.current = latestFaceLandmarksRef.current
+      ? cloneLandmarks(latestFaceLandmarksRef.current)
+      : null;
+    setIsCalibrated(false);
+    setTrackingLabel(liveEnabled ? "hold a neutral pose" : "calibration reset");
+  }
+
+  function resetFaceControls() {
+    setSmoothing(0.68);
+    setMotionIntensity(1);
+    setMouthStrength(0.9);
+    setEyeStrength(0.82);
+    setHeadRotationStrength(0.72);
+    setMaskFeathering(12);
+    setPuppetZoom(1);
+    setFacePositionX(0);
+    setFacePositionY(0);
+  }
+
+  async function changeTrackingMode(nextMode: "landmarks" | "motion") {
+    setTrackingMode(nextMode);
+    if (nextMode === "landmarks" && liveEnabled && !trackingReadyRef.current) {
+      await initializeLandmarkTracking();
+    }
   }
 
   function loadReferenceImage(file: File | undefined) {
@@ -557,11 +864,43 @@ export function App() {
       return;
     }
 
+    setReferenceStatus("Analyzing reference face...");
+    setCameraError("");
     const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      setReferenceImage(typeof reader.result === "string" ? reader.result : "");
+    reader.addEventListener("load", async () => {
+      const source = typeof reader.result === "string" ? reader.result : "";
+      if (!source) {
+        return;
+      }
+
+      setReferenceImage(source);
       setFictionalIdentity("uploaded");
       setAvatarStyle("photo");
+      const image = new Image();
+      image.src = source;
+
+      try {
+        await image.decode();
+        faceRendererRef.current?.setReference(image, [], []);
+        window.requestAnimationFrame(renderFaceOutput);
+        const ready = await initializeLandmarkTracking();
+        const result = ready ? referenceLandmarkerRef.current?.detect(image) : null;
+        const landmarks = result?.faceLandmarks?.[0] as FacePoint[] | undefined;
+
+        if (!landmarks) {
+          setReferenceStatus("No clear face found. Use a front-facing, well-lit photo.");
+          setCameraError("The reference photo needs one clear, front-facing face.");
+          return;
+        }
+
+        faceRendererRef.current?.setReference(image, landmarks, faceTrianglesRef.current);
+        setReferenceStatus("Reference face mapped. Hair, neck and background stay fixed.");
+        window.requestAnimationFrame(renderFaceOutput);
+      } catch {
+        faceRendererRef.current?.clearReference();
+        setReferenceStatus("The reference image could not be analyzed.");
+        setCameraError("Try another JPG or PNG reference image.");
+      }
     });
     reader.readAsDataURL(file);
   }
@@ -749,7 +1088,7 @@ export function App() {
                     {referenceImage ? <img alt="Fictional avatar reference" src={referenceImage} /> : <ImagePlus size={24} />}
                   </div>
                   <span>Upload the photo you want to animate</span>
-                  <small>Use your own photo, a fictional character, or a licensed reference.</small>
+                  <small>{referenceStatus}</small>
                 </label>
 
                 <div className="camera-stage">
@@ -766,8 +1105,9 @@ export function App() {
                       <Radio size={14} />
                       {liveEnabled ? (cameraDrivenGestures ? trackingLabel : "manual tracking") : "standby"}
                     </span>
+                    <span>{fps.toFixed(0)} FPS</span>
+                    <span>{frameLatencyMs.toFixed(1)} ms</span>
                     <span>face {Math.round(faceConfidence * 100)}%</span>
-                    <span>hand {Math.round(handConfidence * 100)}%</span>
                   </div>
                 </div>
 
@@ -783,7 +1123,10 @@ export function App() {
 
                   <label className="field">
                     Tracking engine
-                    <select value={trackingMode} onChange={(event) => setTrackingMode(event.target.value as "landmarks" | "motion")}>
+                    <select
+                      value={trackingMode}
+                      onChange={(event) => changeTrackingMode(event.target.value as "landmarks" | "motion")}
+                    >
                       <option value="landmarks">Real face + hand landmarks</option>
                       <option value="motion">Simple motion fallback</option>
                     </select>
@@ -801,7 +1144,7 @@ export function App() {
                   <label className="field">
                     Output mode
                     <select value={avatarStyle} onChange={(event) => setAvatarStyle(event.target.value)}>
-                      <option value="photo">Real-time photo puppet</option>
+                      <option value="photo">Face mesh reenactment</option>
                       <option value="portrait">Portrait close-up</option>
                       <option value="fullbody">Full body motion</option>
                       <option value="cinematic">Fallback generated avatar</option>
@@ -828,27 +1171,111 @@ export function App() {
                     </select>
                   </label>
 
-                  <label className="field range-field">
+                  <label className="field range-field compact-range">
+                    Smoothing: {smoothing.toFixed(2)}
+                    <input
+                      max="0.95"
+                      min="0"
+                      onChange={(event) => setSmoothing(Number(event.target.value))}
+                      step="0.01"
+                      type="range"
+                      value={smoothing}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
                     Motion strength: {motionIntensity.toFixed(1)}x
                     <input
-                      max="2.4"
-                      min="0.4"
+                      max="1.6"
+                      min="0.25"
                       onChange={(event) => setMotionIntensity(Number(event.target.value))}
-                      step="0.1"
+                      step="0.05"
                       type="range"
                       value={motionIntensity}
                     />
                   </label>
 
-                  <label className="field range-field">
-                    Photo zoom: {puppetZoom.toFixed(2)}x
+                  <label className="field range-field compact-range">
+                    Mouth strength: {mouthStrength.toFixed(2)}
                     <input
-                      max="1.8"
-                      min="0.85"
+                      max="1.4"
+                      min="0.35"
+                      onChange={(event) => setMouthStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={mouthStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Eye strength: {eyeStrength.toFixed(2)}
+                    <input
+                      max="1.3"
+                      min="0.35"
+                      onChange={(event) => setEyeStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={eyeStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Head rotation: {headRotationStrength.toFixed(2)}
+                    <input
+                      max="1.2"
+                      min="0.1"
+                      onChange={(event) => setHeadRotationStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={headRotationStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Mask feathering: {maskFeathering.toFixed(0)} px
+                    <input
+                      max="28"
+                      min="2"
+                      onChange={(event) => setMaskFeathering(Number(event.target.value))}
+                      step="1"
+                      type="range"
+                      value={maskFeathering}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Face scale: {puppetZoom.toFixed(2)}x
+                    <input
+                      max="1.08"
+                      min="0.92"
                       onChange={(event) => setPuppetZoom(Number(event.target.value))}
                       step="0.01"
                       type="range"
                       value={puppetZoom}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Face position X: {facePositionX.toFixed(2)}
+                    <input
+                      max="0.08"
+                      min="-0.08"
+                      onChange={(event) => setFacePositionX(Number(event.target.value))}
+                      step="0.01"
+                      type="range"
+                      value={facePositionX}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Face position Y: {facePositionY.toFixed(2)}
+                    <input
+                      max="0.08"
+                      min="-0.08"
+                      onChange={(event) => setFacePositionY(Number(event.target.value))}
+                      step="0.01"
+                      type="range"
+                      value={facePositionY}
                     />
                   </label>
                 </div>
@@ -859,6 +1286,18 @@ export function App() {
                   <button className="secondary-action" onClick={liveEnabled ? stopCamera : startCamera} type="button">
                     <Camera size={17} />
                     {liveEnabled ? "Stop camera" : "Start camera"}
+                  </button>
+                  <button className="secondary-action" disabled={!liveEnabled} onClick={calibrateFace} type="button">
+                    <Crosshair size={17} />
+                    Calibrate
+                  </button>
+                  <button className="secondary-action" onClick={resetCalibration} type="button">
+                    <RotateCcw size={17} />
+                    Reset calibration
+                  </button>
+                  <button className="secondary-action" onClick={resetFaceControls} type="button">
+                    <ScanFace size={17} />
+                    Reset controls
                   </button>
                   <button className="secondary-action" onClick={() => setExpression("smile")} type="button">
                     <ScanFace size={17} />
@@ -923,136 +1362,7 @@ export function App() {
               <div className="avatar-output">
                 <div className={`ai-face ${avatarStyle}`}>
                   {referenceImage ? (
-                    <div
-                      className="photo-puppet"
-                      style={{
-                        transform: `translate3d(${delayedMotion.x * 26 * motionIntensity}px, ${
-                          delayedMotion.y * 16 * motionIntensity
-                        }px, 0) rotateX(${delayedMotion.y * -2.8 * motionIntensity}deg) rotateY(${
-                          delayedMotion.x * 5.4 * motionIntensity
-                        }deg) rotateZ(${(delayedMotion.roll * 12 + delayedMotion.x * 1.2) * motionIntensity}deg) scale(${
-                          puppetZoom + delayedMotion.proximity * 0.025
-                        })`
-                      }}
-                    >
-                      <img alt="Live photo puppet output" className="puppet-base" src={referenceImage} />
-                      <div
-                        className="puppet-depth-shadow"
-                        style={{
-                          transform: `translate(${delayedMotion.x * -18 * motionIntensity}px, ${
-                            delayedMotion.y * -12 * motionIntensity
-                          }px) scale(${1 + delayedMotion.proximity * 0.04})`
-                        }}
-                      />
-                      <div
-                        className="puppet-layer puppet-body"
-                        style={{
-                          backgroundImage: `url(${referenceImage})`,
-                          transform: `translate3d(${delayedMotion.x * -8 * motionIntensity}px, ${
-                            (delayedMotion.y * 8 + delayedMotion.lean * 8) * motionIntensity
-                          }px, 0) rotateZ(${(delayedMotion.roll * 5 - delayedMotion.x * 1.6) * motionIntensity}deg) scale(${
-                            1 + delayedMotion.proximity * 0.018
-                          })`
-                        }}
-                      />
-                      <div
-                        className="puppet-layer puppet-hair"
-                        style={{
-                          backgroundImage: `url(${referenceImage})`,
-                          transform: `translate3d(${delayedMotion.x * 11 * motionIntensity}px, ${
-                            (delayedMotion.y * 6 - handConfidence * 9) * motionIntensity
-                          }px, 0) rotateZ(${(delayedMotion.roll * 9 + delayedMotion.touchX * handConfidence * 2.5) * motionIntensity}deg) scale(${
-                            1 + delayedMotion.proximity * 0.012
-                          })`
-                        }}
-                      />
-                      <div
-                        className="puppet-layer puppet-face"
-                        style={{
-                          backgroundImage: `url(${referenceImage})`,
-                          transform: `translate3d(${delayedMotion.x * 14 * motionIntensity}px, ${
-                            delayedMotion.y * 9 * motionIntensity
-                          }px, 0) rotateZ(${(delayedMotion.roll * 8 + delayedMotion.x * 1.3) * motionIntensity}deg) scaleX(${
-                            1 + delayedMotion.smile * 0.024 - delayedMotion.mouth * 0.01
-                          }) scaleY(${1 + delayedMotion.mouth * 0.018})`
-                        }}
-                      />
-                      <div
-                        className="puppet-layer puppet-cheek left"
-                        style={{
-                          backgroundImage: `url(${referenceImage})`,
-                          transform: `translate3d(${(delayedMotion.x * 8 - delayedMotion.smile * 4) * motionIntensity}px, ${
-                            (delayedMotion.y * 5 + delayedMotion.mouth * 3) * motionIntensity
-                          }px, 0) scale(${1 + delayedMotion.smile * 0.035 + delayedMotion.mouth * 0.025})`
-                        }}
-                      />
-                      <div
-                        className="puppet-layer puppet-cheek right"
-                        style={{
-                          backgroundImage: `url(${referenceImage})`,
-                          transform: `translate3d(${(delayedMotion.x * 8 + delayedMotion.smile * 4) * motionIntensity}px, ${
-                            (delayedMotion.y * 5 + delayedMotion.mouth * 3) * motionIntensity
-                          }px, 0) scale(${1 + delayedMotion.smile * 0.035 + delayedMotion.mouth * 0.025})`
-                        }}
-                      />
-                      <div
-                        className="puppet-layer puppet-jaw"
-                        style={{
-                          backgroundImage: `url(${referenceImage})`,
-                          transform: `translate3d(${delayedMotion.x * 10 * motionIntensity}px, ${
-                            (delayedMotion.y * 8 + delayedMotion.mouth * 12) * motionIntensity
-                          }px, 0) scaleY(${1 + delayedMotion.mouth * 0.04})`
-                        }}
-                      />
-                      <div
-                        className="puppet-mouth-live"
-                        style={{
-                          opacity: Math.max(0, delayedMotion.mouth - 0.08) * 0.42,
-                          transform: `translate3d(${delayedMotion.x * 7 * motionIntensity}px, ${
-                            (delayedMotion.y * 6 + delayedMotion.mouth * 9) * motionIntensity
-                          }px, 0) rotateZ(${delayedMotion.roll * 5}deg) scaleX(${
-                            0.8 + delayedMotion.smile * 0.28
-                          }) scaleY(${0.22 + delayedMotion.mouth * 0.88})`
-                        }}
-                      />
-                      <div
-                        className="puppet-blink-mask left"
-                        style={{ opacity: delayedMotion.blink, transform: `translateY(${delayedMotion.y * 4}px)` }}
-                      />
-                      <div
-                        className="puppet-blink-mask right"
-                        style={{ opacity: delayedMotion.blink, transform: `translateY(${delayedMotion.y * 4}px)` }}
-                      />
-                      <div
-                        className="puppet-face-focus"
-                        style={{
-                          transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
-                            delayedMotion.y * 8 * motionIntensity
-                          }px) scale(${1 + delayedMotion.smile * 0.025})`
-                        }}
-                      />
-                      <div
-                        className="touch-ripple"
-                        style={{
-                          opacity: handConfidence > 0.28 ? Math.min(0.38, delayedMotion.hand * 0.42) : 0,
-                          left: `${50 - delayedMotion.touchX * 28}%`,
-                          top: `${50 + delayedMotion.touchY * 30}%`
-                        }}
-                      />
-                      <div
-                        className={`photo-hand-cue ${handGesture}`}
-                        style={{
-                          opacity: handConfidence > 0.3 || handGesture !== "idle" ? Math.min(0.86, delayedMotion.hand) : 0,
-                          transform: `translate(${delayedMotion.touchX * -120}px, ${
-                            delayedMotion.touchY * 100 + 70 - delayedMotion.hand * 122
-                          }px) rotate(${
-                            handGesture === "wave" ? -22 + delayedMotion.x * 20 : handGesture === "point" ? -38 : -8
-                          }deg)`
-                        }}
-                      >
-                        <span />
-                      </div>
-                    </div>
+                    <canvas aria-label="Real-time face mesh output" className="face-output-canvas" ref={outputCanvasRef} />
                   ) : (
                     <div className="photo-empty-state">
                       <ImagePlus size={34} />
@@ -1063,19 +1373,19 @@ export function App() {
                 </div>
 
                 <div className="signal-strip">
-                  <span>Head X {delayedMotion.x.toFixed(2)}</span>
-                  <span>Head Y {delayedMotion.y.toFixed(2)}</span>
-                  <span>Smile {delayedMotion.smile.toFixed(2)}</span>
-                  <span>Mouth {delayedMotion.mouth.toFixed(2)}</span>
-                  <span>Hand {delayedMotion.hand.toFixed(2)}</span>
+                  <span>FPS {fps.toFixed(0)}</span>
+                  <span>Latency {frameLatencyMs.toFixed(1)} ms</span>
+                  <span>Smile {motion.smile.toFixed(2)}</span>
+                  <span>Mouth {motion.mouth.toFixed(2)}</span>
+                  <span>Face {Math.round(faceConfidence * 100)}%</span>
                   <span>Tracking {Math.round(trackingStrength * 100)}%</span>
                 </div>
 
                 <div className="pipeline-steps">
                   <span className={liveEnabled ? "done" : ""}>camera</span>
-                  <span className={liveEnabled ? "done" : ""}>gesture map</span>
+                  <span className={isCalibrated ? "done" : ""}>calibrated</span>
                   <span className={referenceImage ? "done" : ""}>{fictionalIdentity}</span>
-                  <span>live photo puppet</span>
+                  <span className={faceConfidence > 0.5 ? "done" : ""}>face mesh</span>
                   <span>stream output</span>
                 </div>
               </div>
