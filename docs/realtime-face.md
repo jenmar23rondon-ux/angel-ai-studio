@@ -19,7 +19,7 @@ The current MVP runs fully in the browser and demonstrates:
 - Fictional or AI-generated avatar reference upload.
 - Expression controls.
 - Basic hand gesture controls.
-- A right-side AI face preview that responds to gesture input.
+- A right-side live photo puppet preview that uses the uploaded image as the output.
 
 Production options:
 

@@ -557,147 +557,119 @@ select {
   filter: saturate(1.15) contrast(1.08);
 }
 
-.ai-face.anime {
+.ai-face.portrait {
   background:
-    linear-gradient(135deg, rgba(255, 139, 213, 0.18), transparent 38%),
+    linear-gradient(135deg, rgba(118, 242, 194, 0.18), transparent 38%),
     linear-gradient(225deg, rgba(118, 242, 194, 0.18), transparent 40%),
     #10131f;
 }
 
-.ai-face.studio {
+.ai-face.fullbody {
   background:
     linear-gradient(135deg, rgba(255, 231, 166, 0.16), transparent 38%),
     linear-gradient(225deg, rgba(118, 242, 194, 0.16), transparent 40%),
     #111820;
 }
 
-.ai-face.robotic {
-  background:
-    linear-gradient(135deg, rgba(95, 175, 255, 0.2), transparent 38%),
-    linear-gradient(225deg, rgba(196, 211, 224, 0.12), transparent 40%),
-    #0c1118;
-}
-
-.face-head {
-  position: relative;
-  z-index: 1;
-  width: min(58%, 300px);
-  aspect-ratio: 0.78;
-  background: linear-gradient(160deg, #f0c5a7, #a86f57);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 48% 48% 44% 44%;
-  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.38);
-  transition: transform 180ms ease;
-}
-
-.hairline {
+.photo-puppet {
   position: absolute;
-  inset: 0 0 auto;
-  height: 28%;
-  background: linear-gradient(145deg, #182331, #33495b);
-  border-radius: 48% 48% 30% 30%;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transform-origin: 50% 50%;
+  transition: transform 150ms ease-out;
 }
 
-.eyes {
+.photo-puppet img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(1.05) contrast(1.04);
+}
+
+.ai-face.portrait .photo-puppet img {
+  object-position: center 34%;
+}
+
+.ai-face.fullbody .photo-puppet img {
+  object-fit: contain;
+  background: #0a1016;
+}
+
+.puppet-face-focus {
   position: absolute;
-  top: 42%;
-  left: 22%;
-  display: flex;
-  width: 56%;
-  justify-content: space-between;
-  transition: transform 160ms ease;
+  top: 18%;
+  left: 32%;
+  width: 36%;
+  height: 38%;
+  border: 1px solid rgba(118, 242, 194, 0.34);
+  border-radius: 44%;
+  box-shadow: 0 0 42px rgba(118, 242, 194, 0.18);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  transition: transform 150ms ease-out;
 }
 
-.eyes span {
-  display: block;
-  width: 42px;
-  height: 18px;
-  background: #0d1014;
-  border-radius: 999px;
-  transition: transform 100ms ease;
-}
-
-.nose {
+.photo-hand-cue {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 18px;
-  height: 52px;
-  border-right: 3px solid rgba(70, 43, 37, 0.35);
-  border-bottom: 3px solid rgba(70, 43, 37, 0.35);
-  border-radius: 0 0 14px;
-  transform: translateX(-50%);
-}
-
-.mouth {
-  position: absolute;
-  top: 70%;
-  left: 50%;
-  width: 88px;
-  background: #4e1d24;
-  border: 3px solid rgba(255, 225, 215, 0.45);
-  transform: translateX(-50%);
-  transition: height 160ms ease, border-radius 160ms ease;
-}
-
-.avatar-shadow {
-  z-index: 1;
-  width: min(42%, 260px);
-  height: 28px;
-  margin-top: -64px;
-  background: rgba(0, 0, 0, 0.34);
-  border-radius: 999px;
-  filter: blur(10px);
-}
-
-.avatar-hand {
-  position: absolute;
-  right: 24%;
+  right: 16%;
   bottom: 20%;
-  z-index: 2;
-  width: 64px;
-  height: 92px;
-  background: linear-gradient(160deg, #f0c5a7, #a86f57);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  width: 62px;
+  height: 90px;
+  background: rgba(240, 197, 167, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 34px 34px 28px 28px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3);
   transform-origin: 50% 100%;
-  transition: transform 180ms ease;
+  transition: transform 150ms ease-out, opacity 150ms ease-out;
 }
 
-.avatar-hand span,
-.avatar-hand::before,
-.avatar-hand::after {
+.photo-hand-cue span,
+.photo-hand-cue::before,
+.photo-hand-cue::after {
   position: absolute;
   top: -30px;
   width: 13px;
   height: 44px;
   content: "";
-  background: linear-gradient(160deg, #f0c5a7, #a86f57);
+  background: rgba(240, 197, 167, 0.92);
   border-radius: 999px;
 }
 
-.avatar-hand span {
-  left: 25px;
+.photo-hand-cue span {
+  left: 24px;
 }
 
-.avatar-hand::before {
+.photo-hand-cue::before {
   left: 8px;
   transform: rotate(-11deg);
 }
 
-.avatar-hand::after {
+.photo-hand-cue::after {
   right: 8px;
   transform: rotate(11deg);
 }
 
-.avatar-hand.point::after {
+.photo-hand-cue.point::after {
   height: 70px;
   transform: translateY(-22px) rotate(8deg);
 }
 
-.avatar-hand.wave {
+.photo-hand-cue.wave {
   animation: wave-hand 900ms ease-in-out infinite alternate;
+}
+
+.photo-empty-state {
+  display: grid;
+  gap: 10px;
+  place-items: center;
+  max-width: 320px;
+  color: #dce8f1;
+  text-align: center;
+}
+
+.photo-empty-state span {
+  color: #9fb0bf;
 }
 
 @keyframes wave-hand {

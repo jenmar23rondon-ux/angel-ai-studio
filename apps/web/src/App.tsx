@@ -84,8 +84,10 @@ export function App() {
   const [micError, setMicError] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [cameraError, setCameraError] = useState("");
-  const [latencyMs, setLatencyMs] = useState(450);
-  const [avatarStyle, setAvatarStyle] = useState("cinematic");
+  const [latencyMs, setLatencyMs] = useState(180);
+  const [avatarStyle, setAvatarStyle] = useState("photo");
+  const [puppetZoom, setPuppetZoom] = useState(1.08);
+  const [motionIntensity, setMotionIntensity] = useState(1.35);
   const [fictionalIdentity, setFictionalIdentity] = useState("generated");
   const [expression, setExpression] = useState("natural");
   const [handGesture, setHandGesture] = useState("idle");
@@ -558,8 +560,8 @@ export function App() {
                   <div className="reference-preview">
                     {referenceImage ? <img alt="Fictional avatar reference" src={referenceImage} /> : <ImagePlus size={24} />}
                   </div>
-                  <span>Upload fictional or AI-generated avatar reference</span>
-                  <small>No celebrity or private-person impersonation.</small>
+                  <span>Upload the photo you want to animate</span>
+                  <small>Use your own photo, a fictional character, or a licensed reference.</small>
                 </label>
 
                 <div
@@ -603,12 +605,12 @@ export function App() {
                   </label>
 
                   <label className="field">
-                    AI face style
+                    Output mode
                     <select value={avatarStyle} onChange={(event) => setAvatarStyle(event.target.value)}>
-                      <option value="cinematic">Cinematic avatar</option>
-                      <option value="anime">Animated creator</option>
-                      <option value="studio">Studio presenter</option>
-                      <option value="robotic">Synthetic assistant</option>
+                      <option value="photo">Live photo puppet</option>
+                      <option value="portrait">Portrait close-up</option>
+                      <option value="fullbody">Full body motion</option>
+                      <option value="cinematic">Fallback generated avatar</option>
                     </select>
                   </label>
 
@@ -635,12 +637,36 @@ export function App() {
                   <label className="field range-field">
                     Delay: {latencyMs}ms
                     <input
-                      max="1200"
-                      min="120"
+                      max="900"
+                      min="0"
                       onChange={(event) => setLatencyMs(Number(event.target.value))}
                       step="30"
                       type="range"
                       value={latencyMs}
+                    />
+                  </label>
+
+                  <label className="field range-field">
+                    Motion strength: {motionIntensity.toFixed(1)}x
+                    <input
+                      max="2.4"
+                      min="0.4"
+                      onChange={(event) => setMotionIntensity(Number(event.target.value))}
+                      step="0.1"
+                      type="range"
+                      value={motionIntensity}
+                    />
+                  </label>
+
+                  <label className="field range-field">
+                    Photo zoom: {puppetZoom.toFixed(2)}x
+                    <input
+                      max="1.8"
+                      min="0.85"
+                      onChange={(event) => setPuppetZoom(Number(event.target.value))}
+                      step="0.01"
+                      type="range"
+                      value={puppetZoom}
                     />
                   </label>
                 </div>
@@ -714,40 +740,43 @@ export function App() {
             {mode === "realtime" ? (
               <div className="avatar-output">
                 <div className={`ai-face ${avatarStyle}`}>
-                  {referenceImage && fictionalIdentity === "uploaded" && (
-                    <img alt="Fictional reference influence" className="reference-backplate" src={referenceImage} />
-                  )}
-                  <div
-                    className="face-head"
-                    style={{
-                      transform: `rotateX(${delayedMotion.y * -8}deg) rotateY(${delayedMotion.x * 12}deg)`
-                    }}
-                  >
-                    <div className="hairline" />
-                    <div className="eyes" style={{ transform: `translateX(${delayedMotion.x * 10}px)` }}>
-                      <span style={{ transform: `scaleY(${delayedMotion.blink ? 0.12 : 1})` }} />
-                      <span style={{ transform: `scaleY(${delayedMotion.blink ? 0.12 : 1})` }} />
-                    </div>
-                    <div className="nose" />
+                  {referenceImage ? (
                     <div
-                      className="mouth"
+                      className="photo-puppet"
                       style={{
-                        borderRadius: `${20 + delayedMotion.smile * 30}px ${20 + delayedMotion.smile * 30}px 70px 70px`,
-                        height: `${8 + delayedMotion.smile * 18}px`
+                        transform: `translate(${delayedMotion.x * 28 * motionIntensity}px, ${
+                          delayedMotion.y * 18 * motionIntensity
+                        }px) rotate(${delayedMotion.x * 4 * motionIntensity}deg) scale(${puppetZoom})`
                       }}
-                    />
-                  </div>
-                  <div
-                    className={`avatar-hand ${handGesture}`}
-                    style={{
-                      transform: `translate(${delayedMotion.x * 24}px, ${80 - delayedMotion.hand * 120}px) rotate(${
-                        handGesture === "wave" ? -22 + delayedMotion.x * 18 : handGesture === "point" ? -42 : -10
-                      }deg)`
-                    }}
-                  >
-                    <span />
-                  </div>
-                  <div className="avatar-shadow" />
+                    >
+                      <img alt="Live photo puppet output" src={referenceImage} />
+                      <div
+                        className="puppet-face-focus"
+                        style={{
+                          transform: `translate(${delayedMotion.x * 10 * motionIntensity}px, ${
+                            delayedMotion.y * 8 * motionIntensity
+                          }px) scale(${1 + delayedMotion.smile * 0.025})`
+                        }}
+                      />
+                      <div
+                        className={`photo-hand-cue ${handGesture}`}
+                        style={{
+                          opacity: Math.min(1, delayedMotion.hand + 0.15),
+                          transform: `translate(${delayedMotion.x * 34}px, ${70 - delayedMotion.hand * 122}px) rotate(${
+                            handGesture === "wave" ? -22 + delayedMotion.x * 20 : handGesture === "point" ? -38 : -8
+                          }deg)`
+                        }}
+                      >
+                        <span />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="photo-empty-state">
+                      <ImagePlus size={34} />
+                      <strong>Upload a reference photo first</strong>
+                      <span>The output will use your uploaded image instead of the drawn avatar.</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="signal-strip">
@@ -755,13 +784,14 @@ export function App() {
                   <span>Head Y {delayedMotion.y.toFixed(2)}</span>
                   <span>Smile {delayedMotion.smile.toFixed(2)}</span>
                   <span>Hand {delayedMotion.hand.toFixed(2)}</span>
+                  <span>Motion {Math.round(trackingStrength * 100)}%</span>
                 </div>
 
                 <div className="pipeline-steps">
                   <span className={liveEnabled ? "done" : ""}>camera</span>
                   <span className={liveEnabled ? "done" : ""}>gesture map</span>
                   <span className={referenceImage ? "done" : ""}>{fictionalIdentity}</span>
-                  <span>AI face render</span>
+                  <span>live photo puppet</span>
                   <span>stream output</span>
                 </div>
               </div>
