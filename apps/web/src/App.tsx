@@ -77,6 +77,11 @@ export function App() {
   const [mode, setMode] = useState<GenerationMode>("image");
   const [prompt, setPrompt] = useState("Create a cinematic studio portrait for a consent-based AI avatar profile.");
   const [voiceOptions, setVoiceOptions] = useState<VoiceOptions>(defaultVoiceOptions);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState("");
+  const [recordedAudioName, setRecordedAudioName] = useState("");
+  const [micError, setMicError] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [latencyMs, setLatencyMs] = useState(450);
@@ -93,6 +98,9 @@ export function App() {
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     listGenerations()
@@ -116,6 +124,25 @@ export function App() {
   useEffect(() => {
     return () => stopCamera();
   }, []);
+
+  useEffect(() => {
+    if (!isRecording) {
+      return;
+    }
+
+    const timer = window.setInterval(() => setRecordingSeconds((current) => current + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isRecording]);
+
+  useEffect(() => {
+    return () => {
+      stopMicrophone();
+
+      if (recordedAudioUrl) {
+        URL.revokeObjectURL(recordedAudioUrl);
+      }
+    };
+  }, [recordedAudioUrl]);
 
   const stats = useMemo(
     () => ({
@@ -146,6 +173,60 @@ export function App() {
 
   function updateVoiceOption<Key extends keyof VoiceOptions>(key: Key, value: VoiceOptions[Key]) {
     setVoiceOptions((current) => ({ ...current, [key]: value }));
+  }
+
+  async function startMicrophoneRecording() {
+    setMicError("");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      });
+
+      recorder.addEventListener("stop", () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const audioUrl = URL.createObjectURL(audioBlob);
+
+        if (recordedAudioUrl) {
+          URL.revokeObjectURL(recordedAudioUrl);
+        }
+
+        setRecordedAudioUrl(audioUrl);
+        setRecordedAudioName(`voice-recording-${new Date().toISOString().slice(11, 19).replaceAll(":", "-")}.webm`);
+        setPrompt(`Translate my recorded voice to ${voiceOptions.targetLanguage} and preserve my ${voiceOptions.emotion.toLowerCase()} emotion.`);
+        stopMicrophone();
+      });
+
+      setRecordingSeconds(0);
+      setIsRecording(true);
+      recorder.start();
+    } catch {
+      setMicError("Microphone permission is needed to record your voice.");
+      setIsRecording(false);
+    }
+  }
+
+  function stopMicrophone() {
+    audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+  }
+
+  function stopMicrophoneRecording() {
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+
+    setIsRecording(false);
   }
 
   async function startCamera() {
@@ -262,6 +343,39 @@ export function App() {
 
             {mode === "audio" && (
               <div className="voice-controls">
+                <div className={isRecording ? "mic-panel recording" : "mic-panel"}>
+                  <div className="mic-meter" aria-hidden="true">
+                    {Array.from({ length: 24 }).map((_, index) => (
+                      <span key={index} style={{ animationDelay: `${index * 38}ms` }} />
+                    ))}
+                  </div>
+                  <div className="mic-copy">
+                    <strong>{isRecording ? "Recording microphone" : recordedAudioUrl ? "Recording ready" : "Microphone input"}</strong>
+                    <span>
+                      {isRecording
+                        ? `${recordingSeconds}s captured`
+                        : recordedAudioName || "Record your voice, then translate or transform it."}
+                    </span>
+                  </div>
+                  <button
+                    className={isRecording ? "record-action active" : "record-action"}
+                    onClick={isRecording ? stopMicrophoneRecording : startMicrophoneRecording}
+                    type="button"
+                  >
+                    <Mic2 size={17} />
+                    {isRecording ? "Stop" : "Record"}
+                  </button>
+                </div>
+
+                {recordedAudioUrl && (
+                  <div className="audio-playback">
+                    <audio controls src={recordedAudioUrl} />
+                    <small>Local preview only. The next backend step is uploading this blob to private storage.</small>
+                  </div>
+                )}
+
+                {micError && <p className="error-message">{micError}</p>}
+
                 <label className="field">
                   Mode
                   <select

@@ -49,6 +49,7 @@ Provider integrations are intentionally isolated behind adapters so the MVP can 
 The app now includes a `Voice Studio` mode for recorded audio workflows:
 
 - Change voice while keeping the same words.
+- Record from the browser microphone and preview the captured audio locally.
 - Preserve rhythm and emotion when the provider supports it.
 - Apply accent targets such as British, Mexican Spanish or Colombian Spanish.
 - Translate between English, Spanish, Portuguese and French.

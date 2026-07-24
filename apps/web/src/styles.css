@@ -202,6 +202,104 @@ select {
   margin-top: 14px;
 }
 
+.mic-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: #0e151d;
+  border: 1px solid #314256;
+  border-radius: 8px;
+}
+
+.mic-panel.recording {
+  border-color: #76f2c2;
+  box-shadow: 0 0 0 1px rgba(118, 242, 194, 0.18);
+}
+
+.mic-meter {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  height: 54px;
+  padding: 0 8px;
+  background: #0b1016;
+  border: 1px solid #243142;
+  border-radius: 8px;
+}
+
+.mic-meter span {
+  display: block;
+  width: 3px;
+  height: 12px;
+  background: #76f2c2;
+  border-radius: 999px;
+  opacity: 0.45;
+}
+
+.mic-panel.recording .mic-meter span {
+  animation: voice-level 720ms ease-in-out infinite alternate;
+}
+
+@keyframes voice-level {
+  from {
+    height: 10px;
+    opacity: 0.35;
+  }
+
+  to {
+    height: 42px;
+    opacity: 1;
+  }
+}
+
+.mic-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mic-copy span,
+.audio-playback small {
+  color: #9fb0bf;
+}
+
+.record-action {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 12px;
+  color: #06110d;
+  font-weight: 800;
+  cursor: pointer;
+  background: #76f2c2;
+  border: 0;
+  border-radius: 8px;
+}
+
+.record-action.active {
+  color: #ffffff;
+  background: #d64b64;
+}
+
+.audio-playback {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding: 12px;
+  background: #101821;
+  border: 1px solid #263343;
+  border-radius: 8px;
+}
+
+.audio-playback audio {
+  width: 100%;
+}
+
 .toggle-row {
   display: flex;
   gap: 10px;
@@ -686,6 +784,10 @@ select {
   }
 
   .voice-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .mic-panel {
     grid-template-columns: 1fr;
   }
 
