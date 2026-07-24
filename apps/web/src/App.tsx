@@ -90,6 +90,8 @@ export function App() {
   const [expression, setExpression] = useState("natural");
   const [handGesture, setHandGesture] = useState("idle");
   const [referenceImage, setReferenceImage] = useState("");
+  const [cameraDrivenGestures, setCameraDrivenGestures] = useState(true);
+  const [trackingStrength, setTrackingStrength] = useState(0);
   const [motion, setMotion] = useState<MotionState>(defaultMotion);
   const [delayedMotion, setDelayedMotion] = useState<MotionState>(defaultMotion);
   const [consentConfirmed, setConsentConfirmed] = useState(true);
@@ -97,7 +99,10 @@ export function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -120,6 +125,21 @@ export function App() {
       stopCamera();
     }
   }, [mode]);
+
+  useEffect(() => {
+    if (!liveEnabled || !cameraDrivenGestures) {
+      previousFrameRef.current = null;
+      return;
+    }
+
+    animationFrameRef.current = window.requestAnimationFrame(trackCameraMotion);
+
+    return () => {
+      if (animationFrameRef.current) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [cameraDrivenGestures, expression, handGesture, liveEnabled]);
 
   useEffect(() => {
     return () => stopCamera();
@@ -248,9 +268,85 @@ export function App() {
   }
 
   function stopCamera() {
+    if (animationFrameRef.current) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    previousFrameRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     setLiveEnabled(false);
+    setTrackingStrength(0);
+  }
+
+  function trackCameraMotion() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas || video.readyState < 2) {
+      animationFrameRef.current = window.requestAnimationFrame(trackCameraMotion);
+      return;
+    }
+
+    const width = 96;
+    const height = 72;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+
+    if (!context) {
+      return;
+    }
+
+    canvas.width = width;
+    canvas.height = height;
+    context.drawImage(video, 0, 0, width, height);
+
+    const frame = context.getImageData(0, 0, width, height).data;
+    const previous = previousFrameRef.current;
+
+    if (previous) {
+      let total = 0;
+      let weightedX = 0;
+      let weightedY = 0;
+
+      for (let index = 0; index < frame.length; index += 16) {
+        const pixel = index / 4;
+        const x = pixel % width;
+        const y = Math.floor(pixel / width);
+        const diff =
+          Math.abs(frame[index] - previous[index]) +
+          Math.abs(frame[index + 1] - previous[index + 1]) +
+          Math.abs(frame[index + 2] - previous[index + 2]);
+
+        if (diff > 54) {
+          total += diff;
+          weightedX += x * diff;
+          weightedY += y * diff;
+        }
+      }
+
+      if (total > 0) {
+        const centerX = weightedX / total;
+        const centerY = weightedY / total;
+        const x = (centerX / width - 0.5) * -2;
+        const y = (centerY / height - 0.5) * 2;
+        const strength = Math.min(1, total / 540000);
+        const expressionBoost = expression === "smile" ? 0.34 : expression === "serious" ? -0.18 : 0;
+        const cameraHand = centerY < height * 0.45 && strength > 0.18 ? 0.96 : Math.max(0.18, strength * 1.4);
+
+        setTrackingStrength(strength);
+        setMotion({
+          x: Math.max(-1, Math.min(1, x)),
+          y: Math.max(-1, Math.min(1, y)),
+          smile: Math.max(0.12, Math.min(0.95, 0.42 + expressionBoost + strength * 0.3)),
+          blink: expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
+          hand: handGesture === "wave" ? 0.95 : handGesture === "point" ? 0.72 : cameraHand
+        });
+      }
+    }
+
+    previousFrameRef.current = new Uint8ClampedArray(frame);
+    animationFrameRef.current = window.requestAnimationFrame(trackCameraMotion);
   }
 
   function updateMotionFromPointer(clientX: number, clientY: number, target: HTMLElement) {
@@ -471,6 +567,7 @@ export function App() {
                   onPointerMove={(event) => updateMotionFromPointer(event.clientX, event.clientY, event.currentTarget)}
                 >
                   <video autoPlay muted playsInline ref={videoRef} />
+                  <canvas className="tracking-canvas" ref={canvasRef} />
                   {!liveEnabled && (
                     <div className="camera-empty">
                       <Camera size={28} />
@@ -480,13 +577,22 @@ export function App() {
                   <div className="tracking-hud">
                     <span>
                       <Radio size={14} />
-                      {liveEnabled ? "tracking" : "standby"}
+                      {liveEnabled ? (cameraDrivenGestures ? "camera tracking" : "manual tracking") : "standby"}
                     </span>
-                    <span>gesture input</span>
+                    <span>{Math.round(trackingStrength * 100)}% motion</span>
                   </div>
                 </div>
 
                 <div className="control-grid">
+                  <label className="toggle-row realtime-toggle">
+                    <input
+                      checked={cameraDrivenGestures}
+                      onChange={(event) => setCameraDrivenGestures(event.target.checked)}
+                      type="checkbox"
+                    />
+                    Drive avatar from camera motion
+                  </label>
+
                   <label className="field">
                     Identity source
                     <select value={fictionalIdentity} onChange={(event) => setFictionalIdentity(event.target.value)}>

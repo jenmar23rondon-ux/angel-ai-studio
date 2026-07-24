@@ -13,6 +13,7 @@ Camera input
 The current MVP runs fully in the browser and demonstrates:
 
 - Camera permission and preview.
+- Camera-frame motion tracking that drives the avatar in real time.
 - Adjustable output delay.
 - Avatar style selection.
 - Fictional or AI-generated avatar reference upload.
