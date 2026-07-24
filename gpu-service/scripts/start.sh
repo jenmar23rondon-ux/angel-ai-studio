@@ -7,7 +7,7 @@ if [ ! -f checkpoints/liveportrait_onnx/appearance_feature_extractor.onnx ]; the
   huggingface-cli download warmshao/FasterLivePortrait --local-dir checkpoints
 fi
 
-if [ ! -f checkpoints/liveportrait_onnx/appearance_feature_extractor.trt ]; then
+if [[ "${FLP_CONFIG:-configs/trt_mp_infer.yaml}" == *"trt"* ]] && [ ! -f checkpoints/liveportrait_onnx/appearance_feature_extractor.trt ]; then
   bash scripts/all_onnx2trt.sh
 fi
 

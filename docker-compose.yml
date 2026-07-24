@@ -44,6 +44,9 @@ services:
       dockerfile: gpu-service/Dockerfile
     environment:
       REALTIME_SESSION_SECRET: ${REALTIME_SESSION_SECRET}
+      PORT: 9871
+      OUTPUT_JPEG_QUALITY: ${OUTPUT_JPEG_QUALITY:-80}
+      OUTPUT_MAX_DIM: ${OUTPUT_MAX_DIM:-512}
     gpus: all
     ports:
       - "9871:9871"

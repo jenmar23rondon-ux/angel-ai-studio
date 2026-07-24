@@ -5,6 +5,8 @@ ARG FASTER_LIVEPORTRAIT_COMMIT=8aad3602177547aaa5e4beec0c3ef5b7944e7a1f
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
+    && ln -sf /root/miniconda3/bin/python /usr/local/bin/python \
+    && ln -sf /root/miniconda3/bin/pip /usr/local/bin/pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
@@ -13,8 +15,10 @@ RUN git clone https://github.com/warmshao/FasterLivePortrait.git \
     && git checkout "${FASTER_LIVEPORTRAIT_COMMIT}"
 
 WORKDIR /opt/FasterLivePortrait
+ENV PATH=/root/miniconda3/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/TensorRT-8.6.1.6/targets/x86_64-linux-gnu/lib:${LD_LIBRARY_PATH}
 COPY gpu-service/requirements.txt /tmp/neural-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/neural-requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/neural-requirements.txt
 
 COPY gpu-service/app realtime_app
 COPY gpu-service/scripts/start.sh /usr/local/bin/start-neural-face
