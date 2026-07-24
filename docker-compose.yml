@@ -36,6 +36,20 @@ services:
     ports:
       - "8000:8000"
 
+  neural-gpu:
+    profiles:
+      - gpu
+    build:
+      context: .
+      dockerfile: gpu-service/Dockerfile
+    environment:
+      REALTIME_SESSION_SECRET: ${REALTIME_SESSION_SECRET}
+    gpus: all
+    ports:
+      - "9871:9871"
+    volumes:
+      - neural-checkpoints:/opt/FasterLivePortrait/checkpoints
+
   audio-service:
     build: ./audio-service
     ports:
@@ -49,4 +63,5 @@ services:
       - "5173:5173"
 
 volumes:
+  neural-checkpoints:
   postgres-data:

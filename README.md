@@ -10,7 +10,7 @@ This repository is a production-oriented starter for an AI media platform with:
 - Redis/BullMQ worker pipeline
 - FastAPI AI service boundary
 - FastAPI audio service boundary for voice conversion, accents and translation
-- Interactive real-time face preview mode for camera-driven avatar sessions
+- GPU-backed neural face reenactment mode for camera-driven avatar sessions
 - Docker Compose for local infrastructure
 - Safety, consent and audit-first architecture
 
@@ -55,6 +55,12 @@ The app now includes a `Voice Studio` mode for recorded audio workflows:
 - Translate between English, Spanish, Portuguese and French.
 - Keep consent checks required for cloned or uploaded voices.
 
-## Real-Time Face Lab
+## Real-Time Neural Face
 
-The web app includes a `Real-time face` mode that opens the browser camera and renders a zero-delay live-photo preview. The current implementation is a working interactive scaffold: it maps camera-frame motion, expression controls, hand gesture controls and reference photo uploads into a layered photo puppet. A production version can replace the lightweight browser motion tracker with MediaPipe face/body landmarks, WebRTC streaming and a generative avatar provider.
+The web app includes a `Real-time face` mode backed by FasterLivePortrait on a
+persistent NVIDIA GPU. MediaPipe provides browser tracking and metrics, while a
+signed WebSocket session streams camera frames directly to the neural renderer.
+The former browser photo-warp renderer has been removed.
+
+See `docs/realtime-face.md` and `gpu-service/README.md` for deployment and
+configuration.

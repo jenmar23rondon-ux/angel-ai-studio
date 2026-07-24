@@ -15,13 +15,26 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildFaceTriangles,
-  FaceMeshRenderer,
-  type FaceConnection,
-  type FacePoint,
-  type FaceTriangle
-} from "./realtime/faceMeshRenderer";
-import { createGeneration, Generation, GenerationMode, listGenerations, VoiceOptions } from "./services/api";
+  NeuralFaceClient,
+  type NeuralRendererOptions,
+  type NeuralRendererStatus
+} from "./realtime/neuralFaceClient";
+import {
+  createGeneration,
+  createRealtimeFaceSession,
+  Generation,
+  GenerationMode,
+  listGenerations,
+  VoiceOptions
+} from "./services/api";
+
+type FacePoint = {
+  x: number;
+  y: number;
+  z?: number;
+  visibility?: number;
+  presence?: number;
+};
 
 type MotionState = {
   x: number;
@@ -154,20 +167,12 @@ export function App() {
   const [cameraError, setCameraError] = useState("");
   const [fps, setFps] = useState(0);
   const [frameLatencyMs, setFrameLatencyMs] = useState(0);
-  const [avatarStyle, setAvatarStyle] = useState("live-swap");
-  const [puppetZoom, setPuppetZoom] = useState(1);
   const [motionIntensity, setMotionIntensity] = useState(1);
   const [smoothing, setSmoothing] = useState(0.68);
-  const [mouthStrength, setMouthStrength] = useState(0.9);
-  const [eyeStrength, setEyeStrength] = useState(0.82);
-  const [headRotationStrength, setHeadRotationStrength] = useState(0.72);
-  const [maskFeathering, setMaskFeathering] = useState(12);
-  const [facePositionX, setFacePositionX] = useState(0);
-  const [facePositionY, setFacePositionY] = useState(0);
-  const [preserveLiveMouth, setPreserveLiveMouth] = useState(true);
-  const [fictionalIdentity, setFictionalIdentity] = useState("generated");
-  const [expression, setExpression] = useState("natural");
-  const [handGesture, setHandGesture] = useState("idle");
+  const [eyeRetargeting, setEyeRetargeting] = useState(true);
+  const [headRotationStrength, setHeadRotationStrength] = useState(0.9);
+  const [lipRetargeting, setLipRetargeting] = useState(true);
+  const [fictionalIdentity, setFictionalIdentity] = useState<"self" | "fictional" | "licensed">("self");
   const [referenceImage, setReferenceImage] = useState("");
   const [referenceStatus, setReferenceStatus] = useState("Upload a reference with one visible face.");
   const [isCalibrated, setIsCalibrated] = useState(false);
@@ -179,13 +184,19 @@ export function App() {
   const [faceConfidence, setFaceConfidence] = useState(0);
   const [handConfidence, setHandConfidence] = useState(0);
   const [motion, setMotion] = useState<MotionState>(defaultMotion);
-  const [consentConfirmed, setConsentConfirmed] = useState(true);
+  const [neuralStatus, setNeuralStatus] = useState<NeuralRendererStatus>("idle");
+  const [neuralMessage, setNeuralMessage] = useState("Neural GPU disconnected");
+  const [neuralFps, setNeuralFps] = useState(0);
+  const [neuralLatencyMs, setNeuralLatencyMs] = useState(0);
+  const [neuralInferenceMs, setNeuralInferenceMs] = useState(0);
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [generations, setGenerations] = useState<Generation[]>(samples);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const referenceElementRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const loopSessionRef = useRef(0);
@@ -194,7 +205,6 @@ export function App() {
   const referenceLandmarkerRef = useRef<any>(null);
   const handLandmarkerRef = useRef<any>(null);
   const trackingReadyRef = useRef(false);
-  const faceTrianglesRef = useRef<FaceTriangle[]>([]);
   const latestFaceLandmarksRef = useRef<FacePoint[] | null>(null);
   const smoothedFaceLandmarksRef = useRef<FacePoint[] | null>(null);
   const neutralFaceLandmarksRef = useRef<FacePoint[] | null>(null);
@@ -206,7 +216,12 @@ export function App() {
     label: "waiting for camera"
   });
   const smoothedMotionRef = useRef<MotionState>(defaultMotion);
-  const faceRendererRef = useRef<FaceMeshRenderer | null>(null);
+  const neuralClientRef = useRef<NeuralFaceClient | null>(null);
+  const hasNeuralFrameRef = useRef(false);
+  const neuralMetricsRef = useRef({
+    frameCount: 0,
+    frameWindowStartedAt: performance.now()
+  });
   const metricsRef = useRef({
     frameCount: 0,
     frameWindowStartedAt: performance.now(),
@@ -217,41 +232,17 @@ export function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  if (!faceRendererRef.current) {
-    faceRendererRef.current = new FaceMeshRenderer();
+  if (!neuralClientRef.current) {
+    neuralClientRef.current = new NeuralFaceClient();
   }
 
   const settingsRef = useRef({
-    avatarStyle,
     cameraDrivenGestures,
-    expression,
-    eyeStrength,
-    facePositionX,
-    facePositionY,
-    handGesture,
-    headRotationStrength,
-    maskFeathering,
-    motionIntensity,
-    mouthStrength,
-    preserveLiveMouth,
-    puppetZoom,
     smoothing,
     trackingMode
   });
   settingsRef.current = {
-    avatarStyle,
     cameraDrivenGestures,
-    expression,
-    eyeStrength,
-    facePositionX,
-    facePositionY,
-    handGesture,
-    headRotationStrength,
-    maskFeathering,
-    motionIntensity,
-    mouthStrength,
-    preserveLiveMouth,
-    puppetZoom,
     smoothing,
     trackingMode
   };
@@ -271,20 +262,15 @@ export function App() {
   }, [mode]);
 
   useEffect(() => {
-    renderFaceOutput();
-  }, [
-    avatarStyle,
-    eyeStrength,
-    facePositionX,
-    facePositionY,
-    headRotationStrength,
-    maskFeathering,
-    motionIntensity,
-    mouthStrength,
-    preserveLiveMouth,
-    puppetZoom,
-    referenceImage
-  ]);
+    hasNeuralFrameRef.current = false;
+    window.requestAnimationFrame(renderPreviewFrame);
+  }, [referenceImage]);
+
+  useEffect(() => {
+    if (liveEnabled) {
+      neuralClientRef.current?.updateOptions(getNeuralOptions());
+    }
+  }, [eyeRetargeting, headRotationStrength, lipRetargeting, liveEnabled, motionIntensity, smoothing]);
 
   useEffect(() => {
     return () => {
@@ -293,6 +279,7 @@ export function App() {
         window.cancelAnimationFrame(animationFrameRef.current);
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      neuralClientRef.current?.close();
       faceLandmarkerRef.current?.close();
       referenceLandmarkerRef.current?.close();
       handLandmarkerRef.current?.close();
@@ -409,6 +396,15 @@ export function App() {
     cancelCameraLoop();
     streamRef.current?.getTracks().forEach((track) => track.stop());
 
+    if (!referenceImage) {
+      setCameraError("Upload one clear reference portrait before starting the neural renderer.");
+      return;
+    }
+    if (!consentConfirmed) {
+      setCameraError("Confirm that you have rights and consent before starting the neural renderer.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -431,6 +427,7 @@ export function App() {
       }
 
       setLiveEnabled(true);
+      hasNeuralFrameRef.current = false;
       setTrackingLabel(trackingMode === "landmarks" ? "acquiring face" : "motion fallback");
       metricsRef.current = {
         frameCount: 0,
@@ -439,6 +436,8 @@ export function App() {
         lastUiUpdateAt: 0
       };
       lastDetectionAtRef.current = 0;
+      window.requestAnimationFrame(renderPreviewFrame);
+      void connectNeuralRenderer();
       const session = ++loopSessionRef.current;
       animationFrameRef.current = window.requestAnimationFrame(() => trackCameraFrame(session));
     } catch {
@@ -458,6 +457,8 @@ export function App() {
 
   function stopCamera() {
     cancelCameraLoop();
+    neuralClientRef.current?.close();
+    hasNeuralFrameRef.current = false;
     previousFrameRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -470,6 +471,11 @@ export function App() {
     setHandConfidence(0);
     setFps(0);
     setFrameLatencyMs(0);
+    setNeuralFps(0);
+    setNeuralLatencyMs(0);
+    setNeuralInferenceMs(0);
+    setNeuralStatus("idle");
+    setNeuralMessage("Neural GPU disconnected");
     lastDetectionAtRef.current = 0;
     lastTrackingSampleRef.current = {
       faceScore: 0,
@@ -479,7 +485,7 @@ export function App() {
     smoothedMotionRef.current = defaultMotion;
     setMotion(defaultMotion);
     setTrackingLabel(trackingReadyRef.current ? "landmark engine ready" : "landmark engine idle");
-    renderFaceOutput();
+    renderPreviewFrame();
   }
 
   async function initializeLandmarkTracking() {
@@ -539,9 +545,6 @@ export function App() {
         });
       }
 
-      faceTrianglesRef.current = buildFaceTriangles(
-        FaceLandmarker.FACE_LANDMARKS_TESSELATION as FaceConnection[]
-      );
       trackingReadyRef.current = true;
       setTrackingReady(true);
       setTrackingLabel("landmark tracking");
@@ -582,7 +585,12 @@ export function App() {
       }
     }
 
-    renderFaceOutput();
+    if (!hasNeuralFrameRef.current) {
+      renderPreviewFrame();
+    }
+    if (videoRef.current && sample.faceScore > 0.35) {
+      void neuralClientRef.current?.sendVideoFrame(videoRef.current);
+    }
     updateTrackingMetrics(startedAt, sample);
 
     if (session === loopSessionRef.current && streamRef.current) {
@@ -605,7 +613,6 @@ export function App() {
     const categories = (faceResult.faceBlendshapes?.[0]?.categories ?? []) as BlendshapeCategory[];
     const score = (name: string) => categories.find((item) => item.categoryName === name)?.score ?? 0;
     const settings = settingsRef.current;
-    const expressionBoost = settings.expression === "smile" ? 0.28 : settings.expression === "serious" ? -0.16 : 0;
     let nextMotion = smoothedMotionRef.current;
     let faceScore = 0;
     let handScore = Math.max(0, nextMotion.hand * 0.86);
@@ -653,8 +660,8 @@ export function App() {
         roll: clamp(roll * 2.1, -0.5, 0.5),
         lean: clamp((0.28 - faceWidth) * 3.2, -0.45, 0.55),
         proximity: clamp((faceWidth - 0.18) * 3.6, 0, 1),
-        smile: clamp(0.2 + smileScore * 0.9 + mouthDistance * 0.35 + expressionBoost, 0.08, 1),
-        blink: settings.expression === "blink" ? 1 : clamp(blinkScore * 1.4, 0, 1),
+        smile: clamp(0.2 + smileScore * 0.9 + mouthDistance * 0.35, 0.08, 1),
+        blink: clamp(blinkScore * 1.4, 0, 1),
         mouth: clamp(mouthDistance + score("jawOpen") * 0.7 + browScore * 0.08, 0, 1)
       };
     } else {
@@ -682,20 +689,14 @@ export function App() {
       handScore = clamp((0.82 - highestFinger) * 2.4, 0.1, 1);
       nextMotion = {
         ...nextMotion,
-        hand:
-          settings.handGesture === "wave" ? Math.max(0.92, handScore) : settings.handGesture === "point" ? 0.86 : handScore,
+        hand: handScore,
         touchX: clamp((0.5 - indexTip.x) * 2),
         touchY: clamp((indexTip.y - 0.5) * 2)
       };
     } else {
       nextMotion = {
         ...nextMotion,
-        hand:
-          settings.handGesture === "wave"
-            ? 0.92
-            : settings.handGesture === "point"
-              ? 0.78
-              : Math.max(0.05, nextMotion.hand * 0.9)
+        hand: Math.max(0.05, nextMotion.hand * 0.9)
       };
     }
 
@@ -762,8 +763,6 @@ export function App() {
         const x = (centerX / width - 0.5) * -2;
         const y = (centerY / height - 0.5) * 2;
         const strength = Math.min(1, total / 540000);
-        const settings = settingsRef.current;
-        const expressionBoost = settings.expression === "smile" ? 0.34 : settings.expression === "serious" ? -0.18 : 0;
         const cameraHand = centerY < height * 0.45 && strength > 0.18 ? 0.96 : Math.max(0.18, strength * 1.4);
 
         const nextMotion = {
@@ -772,9 +771,9 @@ export function App() {
           roll: clamp(x * 0.22, -0.35, 0.35),
           lean: clamp(strength * 0.28, 0, 0.5),
           proximity: clamp(strength * 1.6, 0.1, 1),
-          smile: clamp(0.42 + expressionBoost + strength * 0.3, 0.12, 0.95),
-          blink: settings.expression === "blink" ? 1 : Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
-          hand: settings.handGesture === "wave" ? 0.95 : settings.handGesture === "point" ? 0.72 : cameraHand,
+          smile: clamp(0.42 + strength * 0.3, 0.12, 0.95),
+          blink: Math.max(0, Math.sin(Date.now() / 700) > 0.965 ? 1 : 0),
+          hand: cameraHand,
           mouth: clamp(strength * 0.75, 0.08, 0.75),
           touchX: clamp(x * 0.8),
           touchY: clamp(y * 0.8)
@@ -793,32 +792,151 @@ export function App() {
     };
   }
 
-  function renderFaceOutput() {
+  function getNeuralOptions(): NeuralRendererOptions {
+    return {
+      eyeRetargeting,
+      headRotationStrength,
+      lipRetargeting,
+      motionStrength: motionIntensity,
+      smoothing
+    };
+  }
+
+  async function connectNeuralRenderer() {
+    if (!referenceImage || !consentConfirmed) {
+      return;
+    }
+
+    setNeuralStatus("connecting");
+    setNeuralMessage("Requesting a secure GPU session");
+    hasNeuralFrameRef.current = false;
+
+    try {
+      const session = await createRealtimeFaceSession({
+        consentConfirmed,
+        referenceType: fictionalIdentity
+      });
+
+      await neuralClientRef.current?.connect(
+        session,
+        referenceImage,
+        fictionalIdentity,
+        getNeuralOptions(),
+        {
+          onError: (message) => {
+            setCameraError(message);
+            setNeuralMessage(message);
+            setNeuralStatus("error");
+          },
+          onFrame: (frame, metrics) => {
+            drawNeuralFrame(frame);
+            hasNeuralFrameRef.current = true;
+            setNeuralLatencyMs(metrics.latencyMs);
+
+            const now = performance.now();
+            const neuralMetrics = neuralMetricsRef.current;
+            neuralMetrics.frameCount += 1;
+            const elapsed = now - neuralMetrics.frameWindowStartedAt;
+            if (elapsed >= 500) {
+              setNeuralFps((neuralMetrics.frameCount * 1000) / elapsed);
+              neuralMetrics.frameCount = 0;
+              neuralMetrics.frameWindowStartedAt = now;
+            }
+          },
+          onMetrics: (metrics) => {
+            setNeuralInferenceMs(metrics.inferenceMs);
+            if (metrics.serverFps > 0) {
+              setNeuralFps(metrics.serverFps);
+            }
+          },
+          onStatus: (status, message) => {
+            setNeuralStatus(status);
+            setNeuralMessage(message);
+          }
+        }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The neural renderer is unavailable.";
+      setCameraError(message);
+      setNeuralMessage(message);
+      setNeuralStatus("error");
+      renderPreviewFrame();
+    }
+  }
+
+  function renderPreviewFrame() {
     const output = outputCanvasRef.current;
     if (!output) {
       return;
     }
 
-    const settings = settingsRef.current;
-    faceRendererRef.current?.render(
-      output,
-      smoothedFaceLandmarksRef.current ?? neutralFaceLandmarksRef.current,
-      neutralFaceLandmarksRef.current,
-      {
-        eyeStrength: settings.eyeStrength,
-        facePositionX: settings.facePositionX,
-        facePositionY: settings.facePositionY,
-        faceScale: settings.puppetZoom,
-        fit: settings.avatarStyle === "fullbody" ? "contain" : "cover",
-        headRotationStrength: settings.headRotationStrength,
-        maskFeathering: settings.maskFeathering,
-        mode: settings.avatarStyle === "photo" || settings.avatarStyle === "portrait" ? "photo-reenactment" : "live-swap",
-        motionStrength: settings.motionIntensity,
-        mouthStrength: settings.mouthStrength,
-        preserveLiveMouth: settings.preserveLiveMouth
-      },
-      videoRef.current
-    );
+    const video = videoRef.current;
+    const reference = referenceElementRef.current;
+    const media =
+      video && video.readyState >= 2 && video.videoWidth > 0
+        ? { height: video.videoHeight, source: video, width: video.videoWidth }
+        : reference
+          ? { height: reference.naturalHeight, source: reference, width: reference.naturalWidth }
+          : null;
+
+    if (!media) {
+      return;
+    }
+
+    drawMediaToOutput(media.source, media.width, media.height, Boolean(video && media.source === video));
+  }
+
+  function drawNeuralFrame(frame: ImageBitmap) {
+    try {
+      drawMediaToOutput(frame, frame.width, frame.height, false);
+    } finally {
+      frame.close();
+    }
+  }
+
+  function drawMediaToOutput(
+    media: CanvasImageSource,
+    mediaWidth: number,
+    mediaHeight: number,
+    mirror: boolean
+  ) {
+    const output = outputCanvasRef.current;
+    if (!output || mediaWidth <= 0 || mediaHeight <= 0) {
+      return;
+    }
+
+    const cssWidth = Math.max(1, Math.round(output.clientWidth || 960));
+    const cssHeight = Math.max(1, Math.round(output.clientHeight || 540));
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
+    const pixelWidth = Math.round(cssWidth * pixelRatio);
+    const pixelHeight = Math.round(cssHeight * pixelRatio);
+    if (output.width !== pixelWidth || output.height !== pixelHeight) {
+      output.width = pixelWidth;
+      output.height = pixelHeight;
+    }
+
+    const context = output.getContext("2d", { alpha: false });
+    if (!context) {
+      return;
+    }
+
+    const scale = Math.max(cssWidth / mediaWidth, cssHeight / mediaHeight);
+    const width = mediaWidth * scale;
+    const height = mediaHeight * scale;
+    const left = (cssWidth - width) / 2;
+    const top = (cssHeight - height) / 2;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, output.width, output.height);
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+
+    if (mirror) {
+      context.translate(cssWidth, 0);
+      context.scale(-1, 1);
+    }
+    context.drawImage(media, left, top, width, height);
+    context.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   function updateTrackingMetrics(startedAt: number, sample: TrackingSample) {
@@ -853,10 +971,10 @@ export function App() {
 
     neutralFaceLandmarksRef.current = cloneLandmarks(latest);
     smoothedFaceLandmarksRef.current = cloneLandmarks(latest);
+    neuralClientRef.current?.calibrate();
     setIsCalibrated(true);
     setCameraError("");
     setTrackingLabel("neutral pose calibrated");
-    renderFaceOutput();
   }
 
   function resetCalibration() {
@@ -865,19 +983,16 @@ export function App() {
       ? cloneLandmarks(latestFaceLandmarksRef.current)
       : null;
     setIsCalibrated(false);
+    neuralClientRef.current?.calibrate();
     setTrackingLabel(liveEnabled ? "hold a neutral pose" : "calibration reset");
   }
 
   function resetFaceControls() {
     setSmoothing(0.68);
     setMotionIntensity(1);
-    setMouthStrength(0.9);
-    setEyeStrength(0.82);
-    setHeadRotationStrength(0.72);
-    setMaskFeathering(12);
-    setPuppetZoom(1);
-    setFacePositionX(0);
-    setFacePositionY(0);
+    setEyeRetargeting(true);
+    setHeadRotationStrength(0.9);
+    setLipRetargeting(true);
   }
 
   async function changeTrackingMode(nextMode: "landmarks" | "motion") {
@@ -891,7 +1006,18 @@ export function App() {
     if (!file) {
       return;
     }
+    if (!file.type.startsWith("image/")) {
+      setCameraError("Choose a JPG, PNG, or WebP reference image.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setCameraError("The reference image must be 10 MB or smaller.");
+      return;
+    }
 
+    if (liveEnabled) {
+      stopCamera();
+    }
     setReferenceStatus("Analyzing reference face...");
     setCameraError("");
     const reader = new FileReader();
@@ -902,15 +1028,14 @@ export function App() {
       }
 
       setReferenceImage(source);
-      setFictionalIdentity("uploaded");
-      setAvatarStyle("live-swap");
       const image = new Image();
       image.src = source;
 
       try {
         await image.decode();
-        faceRendererRef.current?.setReference(image, [], []);
-        window.requestAnimationFrame(renderFaceOutput);
+        referenceElementRef.current = image;
+        hasNeuralFrameRef.current = false;
+        window.requestAnimationFrame(renderPreviewFrame);
         const ready = await initializeLandmarkTracking();
         const result = ready ? referenceLandmarkerRef.current?.detect(image) : null;
         const landmarks = result?.faceLandmarks?.[0] as FacePoint[] | undefined;
@@ -921,11 +1046,10 @@ export function App() {
           return;
         }
 
-        faceRendererRef.current?.setReference(image, landmarks, faceTrianglesRef.current);
-        setReferenceStatus("Identity mapped. Your live camera keeps the body, hands, hair and background.");
-        window.requestAnimationFrame(renderFaceOutput);
+        setReferenceStatus("Reference validated. Neural identity encoding starts with the camera.");
+        window.requestAnimationFrame(renderPreviewFrame);
       } catch {
-        faceRendererRef.current?.clearReference();
+        referenceElementRef.current = null;
         setReferenceStatus("The reference image could not be analyzed.");
         setCameraError("Try another JPG or PNG reference image.");
       }
@@ -1162,40 +1286,22 @@ export function App() {
 
                   <label className="field">
                     Identity source
-                    <select value={fictionalIdentity} onChange={(event) => setFictionalIdentity(event.target.value)}>
-                      <option value="generated">AI-generated character</option>
-                      <option value="uploaded">Uploaded fictional reference</option>
+                    <select
+                      value={fictionalIdentity}
+                      onChange={(event) =>
+                        setFictionalIdentity(event.target.value as "self" | "fictional" | "licensed")
+                      }
+                    >
+                      <option value="self">My own face</option>
+                      <option value="fictional">AI-generated or fictional character</option>
                       <option value="licensed">Licensed actor reference</option>
                     </select>
                   </label>
 
                   <label className="field">
                     Output mode
-                    <select value={avatarStyle} onChange={(event) => setAvatarStyle(event.target.value)}>
-                      <option value="live-swap">Live camera face swap</option>
-                      <option value="photo">Reference photo reenactment</option>
-                      <option value="portrait">Reference portrait close-up</option>
-                      <option value="fullbody">Full camera + face swap</option>
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    Expression
-                    <select value={expression} onChange={(event) => setExpression(event.target.value)}>
-                      <option value="natural">Natural</option>
-                      <option value="smile">Smile</option>
-                      <option value="serious">Serious</option>
-                      <option value="blink">Blink test</option>
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    Hand gesture
-                    <select value={handGesture} onChange={(event) => setHandGesture(event.target.value)}>
-                      <option value="idle">Idle hands</option>
-                      <option value="wave">Wave</option>
-                      <option value="point">Point</option>
-                      <option value="follow">Follow camera area</option>
+                    <select value="neural" disabled>
+                      <option value="neural">Neural LivePortrait reenactment</option>
                     </select>
                   </label>
 
@@ -1223,104 +1329,54 @@ export function App() {
                     />
                   </label>
 
-                  <label className="field range-field compact-range">
-                    Mouth strength: {mouthStrength.toFixed(2)}
+                  <label className="toggle-row realtime-toggle">
                     <input
-                      max="1.4"
-                      min="0.35"
-                      onChange={(event) => setMouthStrength(Number(event.target.value))}
-                      step="0.05"
-                      type="range"
-                      value={mouthStrength}
+                      checked={lipRetargeting}
+                      onChange={(event) => setLipRetargeting(event.target.checked)}
+                      type="checkbox"
                     />
+                    Neural lip and teeth retargeting
                   </label>
 
-                  <label className="field range-field compact-range">
-                    Eye strength: {eyeStrength.toFixed(2)}
+                  <label className="toggle-row realtime-toggle">
                     <input
-                      max="1.3"
-                      min="0.35"
-                      onChange={(event) => setEyeStrength(Number(event.target.value))}
-                      step="0.05"
-                      type="range"
-                      value={eyeStrength}
+                      checked={eyeRetargeting}
+                      onChange={(event) => setEyeRetargeting(event.target.checked)}
+                      type="checkbox"
                     />
+                    Neural eye and blink retargeting
                   </label>
 
                   <label className="field range-field compact-range">
                     Head rotation: {headRotationStrength.toFixed(2)}
                     <input
-                      max="1.2"
-                      min="0.1"
+                      max="1.25"
+                      min="0"
                       onChange={(event) => setHeadRotationStrength(Number(event.target.value))}
                       step="0.05"
                       type="range"
                       value={headRotationStrength}
                     />
                   </label>
+                </div>
 
-                  <label className="field range-field compact-range">
-                    Mask feathering: {maskFeathering.toFixed(0)} px
-                    <input
-                      max="28"
-                      min="2"
-                      onChange={(event) => setMaskFeathering(Number(event.target.value))}
-                      step="1"
-                      type="range"
-                      value={maskFeathering}
-                    />
-                  </label>
-
-                  <label className="field range-field compact-range">
-                    Face scale: {puppetZoom.toFixed(2)}x
-                    <input
-                      max="1.08"
-                      min="0.92"
-                      onChange={(event) => setPuppetZoom(Number(event.target.value))}
-                      step="0.01"
-                      type="range"
-                      value={puppetZoom}
-                    />
-                  </label>
-
-                  <label className="field range-field compact-range">
-                    Face position X: {facePositionX.toFixed(2)}
-                    <input
-                      max="0.08"
-                      min="-0.08"
-                      onChange={(event) => setFacePositionX(Number(event.target.value))}
-                      step="0.01"
-                      type="range"
-                      value={facePositionX}
-                    />
-                  </label>
-
-                  <label className="field range-field compact-range">
-                    Face position Y: {facePositionY.toFixed(2)}
-                    <input
-                      max="0.08"
-                      min="-0.08"
-                      onChange={(event) => setFacePositionY(Number(event.target.value))}
-                      step="0.01"
-                      type="range"
-                      value={facePositionY}
-                    />
-                  </label>
-
-                  <label className="toggle-row realtime-toggle">
-                    <input
-                      checked={preserveLiveMouth}
-                      onChange={(event) => setPreserveLiveMouth(event.target.checked)}
-                      type="checkbox"
-                    />
-                    Preserve live mouth interior for teeth and lip sync
-                  </label>
+                <div className={`neural-status ${neuralStatus}`}>
+                  <Activity size={16} />
+                  <div>
+                    <strong>{neuralStatus === "streaming" ? "Neural renderer live" : "Neural renderer"}</strong>
+                    <span>{neuralMessage}</span>
+                  </div>
                 </div>
 
                 {cameraError && <p className="error-message">{cameraError}</p>}
 
                 <div className="button-row">
-                  <button className="secondary-action" onClick={liveEnabled ? stopCamera : startCamera} type="button">
+                  <button
+                    className="secondary-action"
+                    disabled={!liveEnabled && (!referenceImage || !consentConfirmed)}
+                    onClick={liveEnabled ? stopCamera : startCamera}
+                    type="button"
+                  >
                     <Camera size={17} />
                     {liveEnabled ? "Stop camera" : "Start camera"}
                   </button>
@@ -1336,14 +1392,6 @@ export function App() {
                     <ScanFace size={17} />
                     Reset controls
                   </button>
-                  <button className="secondary-action" onClick={() => setExpression("smile")} type="button">
-                    <ScanFace size={17} />
-                    Test smile
-                  </button>
-                  <button className="secondary-action" onClick={() => setHandGesture("wave")} type="button">
-                    <Radio size={17} />
-                    Test hand
-                  </button>
                 </div>
               </div>
             )}
@@ -1354,14 +1402,14 @@ export function App() {
                 {mode === "audio"
                   ? "Drop audio file or record from the browser"
                   : mode === "realtime"
-                    ? "Live puppet sessions can be recorded or streamed later"
+                    ? "Neural portrait sessions can be recorded or streamed later"
                     : "Drop source image or training photos here"}
               </span>
               <small>
                 {mode === "audio"
                   ? "Audio upload and recording flow is scaffolded for MP3/WAV."
                   : mode === "realtime"
-                    ? "Live swap keeps the camera frame and replaces only the tracked facial region."
+                    ? "Frames are regenerated by a GPU model instead of deforming the uploaded photograph."
                     : "Upload endpoint is scaffolded for S3 signed URLs."}
               </small>
             </div>
@@ -1391,27 +1439,35 @@ export function App() {
 
           <div className={mode === "realtime" ? "gallery-panel realtime-panel" : "gallery-panel"}>
             <div className="panel-header">
-              <h2>{mode === "realtime" ? "AI face output" : "Private gallery"}</h2>
-              <span>{mode === "realtime" ? "live preview" : `${generations.length} items`}</span>
+              <h2>{mode === "realtime" ? "Neural face output" : "Private gallery"}</h2>
+              <span>{mode === "realtime" ? neuralStatus : `${generations.length} items`}</span>
             </div>
 
             {mode === "realtime" ? (
               <div className="avatar-output">
-                <div className={`ai-face ${avatarStyle}`}>
+                <div className="ai-face neural-live">
                   {referenceImage || liveEnabled ? (
-                    <canvas aria-label="Real-time face mesh output" className="face-output-canvas" ref={outputCanvasRef} />
+                    <>
+                      <canvas
+                        aria-label="Neural real-time face output"
+                        className="face-output-canvas"
+                        ref={outputCanvasRef}
+                      />
+                      <span className="ai-content-label">AI GENERATED LIVE</span>
+                    </>
                   ) : (
                     <div className="photo-empty-state">
                       <ImagePlus size={34} />
                       <strong>Upload a reference photo first</strong>
-                      <span>The output will use your uploaded image instead of the drawn avatar.</span>
+                      <span>The GPU will encode this identity before the live session starts.</span>
                     </div>
                   )}
                 </div>
 
                 <div className="signal-strip">
-                  <span>FPS {fps.toFixed(0)}</span>
-                  <span>Latency {frameLatencyMs.toFixed(1)} ms</span>
+                  <span>Neural FPS {neuralFps.toFixed(0)}</span>
+                  <span>End-to-end {neuralLatencyMs.toFixed(1)} ms</span>
+                  <span>Inference {neuralInferenceMs.toFixed(1)} ms</span>
                   <span>Smile {motion.smile.toFixed(2)}</span>
                   <span>Mouth {motion.mouth.toFixed(2)}</span>
                   <span>Face {Math.round(faceConfidence * 100)}%</span>
@@ -1422,7 +1478,7 @@ export function App() {
                   <span className={liveEnabled ? "done" : ""}>camera</span>
                   <span className={isCalibrated ? "done" : ""}>calibrated</span>
                   <span className={referenceImage ? "done" : ""}>{fictionalIdentity}</span>
-                  <span className={faceConfidence > 0.5 ? "done" : ""}>live face swap</span>
+                  <span className={neuralStatus === "streaming" ? "done" : ""}>LivePortrait GPU</span>
                   <span>stream output</span>
                 </div>
               </div>

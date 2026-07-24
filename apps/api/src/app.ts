@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { env } from "./config/env.js";
 import { errorMiddleware } from "./middlewares/error.middleware.js";
 import { generationsRouter } from "./routes/generations.routes.js";
+import { realtimeRouter } from "./routes/realtime.routes.js";
 
 export const app = express();
 
@@ -16,4 +17,5 @@ app.get("/health", (_request, response) => {
 });
 
 app.use("/api/generations", generationsRouter);
+app.use("/api/realtime", realtimeRouter);
 app.use(errorMiddleware);

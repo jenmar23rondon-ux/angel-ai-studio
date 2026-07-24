@@ -20,6 +20,13 @@ export type Generation = {
   createdAt: string;
 };
 
+export type RealtimeFaceSession = {
+  expiresAt: string;
+  provider: "faster-liveportrait";
+  token: string;
+  wsUrl: string;
+};
+
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
 export async function createGeneration(input: {
@@ -49,4 +56,22 @@ export async function listGenerations() {
   }
 
   return (await response.json()) as Generation[];
+}
+
+export async function createRealtimeFaceSession(input: {
+  consentConfirmed: boolean;
+  referenceType: "self" | "fictional" | "licensed";
+}) {
+  const response = await fetch(`${API_URL}/api/realtime/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "The neural renderer is unavailable.");
+  }
+
+  return (await response.json()) as RealtimeFaceSession;
 }

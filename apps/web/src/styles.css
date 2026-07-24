@@ -476,6 +476,43 @@ select {
   opacity: 0.48;
 }
 
+.neural-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+  color: #b7c6d3;
+  background: #0d141b;
+  border: 1px solid #314256;
+  border-radius: 8px;
+}
+
+.neural-status div {
+  display: grid;
+  gap: 2px;
+}
+
+.neural-status strong {
+  color: #e9f1f7;
+}
+
+.neural-status span {
+  font-size: 13px;
+}
+
+.neural-status.ready,
+.neural-status.streaming {
+  color: #76f2c2;
+  background: #0d1c18;
+  border-color: #2b7259;
+}
+
+.neural-status.error {
+  color: #ffb8b8;
+  background: #241315;
+  border-color: #704047;
+}
+
 .upload-slot {
   display: grid;
   gap: 8px;
@@ -555,32 +592,7 @@ select {
   border-radius: 8px;
 }
 
-.reference-backplate {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  opacity: 0.22;
-  filter: saturate(1.15) contrast(1.08);
-}
-
-.ai-face.portrait {
-  background:
-    linear-gradient(135deg, rgba(118, 242, 194, 0.18), transparent 38%),
-    linear-gradient(225deg, rgba(118, 242, 194, 0.18), transparent 40%),
-    #10131f;
-}
-
-.ai-face.fullbody {
-  background:
-    linear-gradient(135deg, rgba(255, 231, 166, 0.16), transparent 38%),
-    linear-gradient(225deg, rgba(118, 242, 194, 0.16), transparent 40%),
-    #111820;
-}
-
-.ai-face.live-swap,
-.ai-face.fullbody {
+.ai-face.neural-live {
   width: 100%;
   min-height: 0;
   aspect-ratio: 16 / 9;
@@ -596,10 +608,24 @@ select {
   background: #090d12;
 }
 
-.ai-face.live-swap .face-output-canvas,
-.ai-face.fullbody .face-output-canvas {
+.ai-face.neural-live .face-output-canvas {
   min-height: 0;
   aspect-ratio: 16 / 9;
+}
+
+.ai-content-label {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 6px 8px;
+  color: #baffdf;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  background: rgba(5, 17, 13, 0.82);
+  border: 1px solid rgba(118, 242, 194, 0.48);
+  border-radius: 6px;
+  backdrop-filter: blur(8px);
 }
 
 .photo-empty-state {
