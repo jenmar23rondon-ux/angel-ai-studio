@@ -579,6 +579,14 @@ select {
     #111820;
 }
 
+.ai-face.live-swap,
+.ai-face.fullbody {
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  align-self: start;
+}
+
 .face-output-canvas {
   display: block;
   width: 100%;
@@ -586,6 +594,12 @@ select {
   min-height: 520px;
   object-fit: cover;
   background: #090d12;
+}
+
+.ai-face.live-swap .face-output-canvas,
+.ai-face.fullbody .face-output-canvas {
+  min-height: 0;
+  aspect-ratio: 16 / 9;
 }
 
 .photo-empty-state {

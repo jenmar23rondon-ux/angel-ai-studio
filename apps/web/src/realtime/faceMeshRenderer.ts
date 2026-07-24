@@ -14,6 +14,7 @@ export type FaceConnection = {
 export type FaceTriangle = [number, number, number];
 
 export type FaceRenderControls = {
+  mode: "live-swap" | "photo-reenactment";
   motionStrength: number;
   mouthStrength: number;
   eyeStrength: number;
@@ -23,6 +24,7 @@ export type FaceRenderControls = {
   facePositionX: number;
   facePositionY: number;
   fit: "cover" | "contain";
+  preserveLiveMouth: boolean;
 };
 
 type Point = {
@@ -41,6 +43,7 @@ const faceOval = [
   10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150,
   136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
 ];
+const mouthInterior = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
 const mouthLandmarks = new Set([
   0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 84, 87, 88, 91, 95, 146, 178, 181, 185, 191, 267, 269, 270, 291,
   308, 310, 311, 312, 314, 317, 318, 321, 324, 375, 402, 405, 409, 415
@@ -52,6 +55,7 @@ const eyeLandmarks = new Set([
 ]);
 const jawLandmarks = new Set([17, 152, 148, 176, 149, 150, 136, 172, 58, 132, 288, 397, 365, 379, 378, 400, 377]);
 const ovalLandmarks = new Set(faceOval);
+const skinSampleLandmarks = [1, 50, 101, 205, 280, 330, 425];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -96,14 +100,22 @@ export function buildFaceTriangles(connections: FaceConnection[]): FaceTriangle[
 export class FaceMeshRenderer {
   private readonly faceBuffer = document.createElement("canvas");
   private readonly maskBuffer = document.createElement("canvas");
+  private readonly detailBuffer = document.createElement("canvas");
+  private readonly detailMaskBuffer = document.createElement("canvas");
+  private readonly sourceSampleBuffer = document.createElement("canvas");
   private referenceImage: HTMLImageElement | null = null;
   private referenceLandmarks: FacePoint[] | null = null;
   private triangles: FaceTriangle[] = [];
+  private referenceLuminance = 128;
+  private liveBrightness = 1;
+  private renderedFrames = 0;
 
   setReference(image: HTMLImageElement, landmarks: FacePoint[], triangles: FaceTriangle[]) {
     this.referenceImage = image;
     this.referenceLandmarks = landmarks.map((point) => ({ ...point }));
     this.triangles = triangles;
+    this.referenceLuminance = this.measureReferenceLuminance(image, landmarks);
+    this.liveBrightness = 1;
   }
 
   clearReference() {
@@ -116,42 +128,56 @@ export class FaceMeshRenderer {
     output: HTMLCanvasElement,
     currentLandmarks: FacePoint[] | null,
     neutralLandmarks: FacePoint[] | null,
-    controls: FaceRenderControls
+    controls: FaceRenderControls,
+    video: HTMLVideoElement | null
   ) {
     const image = this.referenceImage;
     const reference = this.referenceLandmarks;
     const cssWidth = Math.max(1, Math.round(output.clientWidth || 960));
     const cssHeight = Math.max(1, Math.round(output.clientHeight || 540));
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
     const pixelWidth = Math.round(cssWidth * pixelRatio);
     const pixelHeight = Math.round(cssHeight * pixelRatio);
 
     this.resizeCanvas(output, pixelWidth, pixelHeight);
     this.resizeCanvas(this.faceBuffer, pixelWidth, pixelHeight);
     this.resizeCanvas(this.maskBuffer, pixelWidth, pixelHeight);
+    this.resizeCanvas(this.detailBuffer, pixelWidth, pixelHeight);
+    this.resizeCanvas(this.detailMaskBuffer, pixelWidth, pixelHeight);
 
     const outputContext = output.getContext("2d");
     const faceContext = this.faceBuffer.getContext("2d");
     const maskContext = this.maskBuffer.getContext("2d");
+    const detailContext = this.detailBuffer.getContext("2d");
+    const detailMaskContext = this.detailMaskBuffer.getContext("2d");
 
-    if (!outputContext || !faceContext || !maskContext) {
+    if (!outputContext || !faceContext || !maskContext || !detailContext || !detailMaskContext) {
       return;
     }
 
     this.resetContext(outputContext, pixelRatio, cssWidth, cssHeight);
     this.resetContext(faceContext, pixelRatio, cssWidth, cssHeight);
     this.resetContext(maskContext, pixelRatio, cssWidth, cssHeight);
+    this.resetContext(detailContext, pixelRatio, cssWidth, cssHeight);
+    this.resetContext(detailMaskContext, pixelRatio, cssWidth, cssHeight);
 
-    if (!image) {
+    const hasLiveVideo =
+      controls.mode === "live-swap" && Boolean(video && video.readyState >= 2 && video.videoWidth && video.videoHeight);
+    const videoFit = hasLiveVideo && video ? this.getMediaFit(video.videoWidth, video.videoHeight, cssWidth, cssHeight, "cover") : null;
+
+    if (hasLiveVideo && video && videoFit) {
+      this.drawMirroredVideo(outputContext, video, videoFit, cssWidth);
+    } else if (image) {
+      const fit = this.getImageFit(image, cssWidth, cssHeight, controls.fit);
+      outputContext.imageSmoothingEnabled = true;
+      outputContext.imageSmoothingQuality = "high";
+      outputContext.drawImage(image, fit.left, fit.top, fit.width, fit.height);
+    } else {
       return;
     }
 
-    const fit = this.getImageFit(image, cssWidth, cssHeight, controls.fit);
-    outputContext.imageSmoothingEnabled = true;
-    outputContext.imageSmoothingQuality = "high";
-    outputContext.drawImage(image, fit.left, fit.top, fit.width, fit.height);
-
     if (
+      !image ||
       !reference ||
       !currentLandmarks ||
       !neutralLandmarks ||
@@ -161,18 +187,29 @@ export class FaceMeshRenderer {
       return;
     }
 
-    const sourcePoints = reference.map((point) => ({
-      x: fit.left + point.x * fit.width,
-      y: fit.top + point.y * fit.height
-    }));
-    const targetPoints = this.buildTargetPoints(sourcePoints, currentLandmarks, neutralLandmarks, controls);
+    const targetPoints =
+      hasLiveVideo && videoFit
+        ? this.buildLiveTargetPoints(currentLandmarks, neutralLandmarks, videoFit, controls)
+        : this.buildPhotoTargetPoints(image, cssWidth, cssHeight, currentLandmarks, neutralLandmarks, controls);
     const sourceImagePoints = reference.map((point) => ({
       x: point.x * image.naturalWidth,
       y: point.y * image.naturalHeight
     }));
 
+    this.renderedFrames += 1;
+    if (hasLiveVideo && this.renderedFrames % 6 === 0) {
+      const targetLuminance = this.measureTargetLuminance(outputContext, targetPoints, pixelRatio);
+      if (targetLuminance > 0 && this.referenceLuminance > 0) {
+        const correction = clamp(targetLuminance / this.referenceLuminance, 0.72, 1.28);
+        this.liveBrightness += (correction - this.liveBrightness) * 0.18;
+      }
+    }
+
     faceContext.imageSmoothingEnabled = true;
     faceContext.imageSmoothingQuality = "high";
+    faceContext.filter = hasLiveVideo
+      ? `brightness(${this.liveBrightness.toFixed(3)}) saturate(0.94) contrast(0.98)`
+      : "none";
 
     for (const [a, b, c] of this.triangles) {
       const sourceTriangle = [sourceImagePoints[a], sourceImagePoints[b], sourceImagePoints[c]];
@@ -200,9 +237,40 @@ export class FaceMeshRenderer {
     outputContext.restore();
 
     outputContext.drawImage(this.faceBuffer, 0, 0, cssWidth, cssHeight);
+
+    if (hasLiveVideo && video && videoFit && controls.preserveLiveMouth) {
+      this.drawLiveMouthDetails(
+        outputContext,
+        detailContext,
+        detailMaskContext,
+        video,
+        videoFit,
+        targetPoints,
+        cssWidth,
+        cssHeight
+      );
+    }
   }
 
-  private buildTargetPoints(
+  private buildPhotoTargetPoints(
+    image: HTMLImageElement,
+    width: number,
+    height: number,
+    current: FacePoint[],
+    neutral: FacePoint[],
+    controls: FaceRenderControls
+  ) {
+    const fit = this.getImageFit(image, width, height, controls.fit);
+    const referencePoints =
+      this.referenceLandmarks?.map((point) => ({
+        x: fit.left + point.x * fit.width,
+        y: fit.top + point.y * fit.height
+      })) ?? [];
+
+    return this.buildPhotoMotionPoints(referencePoints, current, neutral, controls);
+  }
+
+  private buildPhotoMotionPoints(
     sourcePoints: Point[],
     current: FacePoint[],
     neutral: FacePoint[],
@@ -287,6 +355,94 @@ export class FaceMeshRenderer {
     });
   }
 
+  private buildLiveTargetPoints(
+    current: FacePoint[],
+    neutral: FacePoint[],
+    videoFit: { left: number; top: number; width: number; height: number },
+    controls: FaceRenderControls
+  ) {
+    const currentBounds = this.getNormalizedBounds(current);
+    const neutralBounds = this.getNormalizedBounds(neutral);
+    const neutralNose = neutral[1] ?? neutral[4];
+
+    const points = current.map((currentPoint, index) => {
+      const neutralPoint = neutral[index] ?? neutralNose;
+      const neutralLocalX = (neutralPoint.x - neutralBounds.centerX) / neutralBounds.width;
+      const neutralLocalY = (neutralPoint.y - neutralBounds.centerY) / neutralBounds.height;
+      const rigidX = currentBounds.centerX + neutralLocalX * currentBounds.width;
+      const rigidY = currentBounds.centerY + neutralLocalY * currentBounds.height;
+      let strength = controls.headRotationStrength;
+
+      if (mouthLandmarks.has(index)) {
+        strength = controls.mouthStrength;
+      } else if (eyeLandmarks.has(index)) {
+        strength = controls.eyeStrength;
+      } else if (jawLandmarks.has(index)) {
+        strength = (controls.headRotationStrength + controls.mouthStrength) / 2;
+      }
+
+      const expressionStrength = ovalLandmarks.has(index)
+        ? 1
+        : clamp(strength * controls.motionStrength, 0.15, 1.35);
+      const x = rigidX + (currentPoint.x - rigidX) * expressionStrength;
+      const y = rigidY + (currentPoint.y - rigidY) * expressionStrength;
+
+      return {
+        x: videoFit.left + (1 - x) * videoFit.width,
+        y: videoFit.top + y * videoFit.height
+      };
+    });
+
+    const bounds = this.getBounds(faceOval.map((index) => points[index]).filter(Boolean));
+    const positionX = controls.facePositionX * bounds.width;
+    const positionY = controls.facePositionY * bounds.height;
+
+    return points.map((point) => ({
+      x: bounds.centerX + (point.x - bounds.centerX) * controls.faceScale + positionX,
+      y: bounds.centerY + (point.y - bounds.centerY) * controls.faceScale + positionY
+    }));
+  }
+
+  private drawLiveMouthDetails(
+    outputContext: CanvasRenderingContext2D,
+    detailContext: CanvasRenderingContext2D,
+    detailMaskContext: CanvasRenderingContext2D,
+    video: HTMLVideoElement,
+    videoFit: { left: number; top: number; width: number; height: number },
+    targetPoints: Point[],
+    width: number,
+    height: number
+  ) {
+    this.drawMirroredVideo(detailContext, video, videoFit, width);
+    detailMaskContext.save();
+    detailMaskContext.filter = "blur(1.6px)";
+    detailMaskContext.fillStyle = "#fff";
+    this.traceFeature(detailMaskContext, targetPoints, mouthInterior, 1.08);
+    detailMaskContext.fill();
+    detailMaskContext.restore();
+
+    detailContext.save();
+    detailContext.globalCompositeOperation = "destination-in";
+    detailContext.drawImage(this.detailMaskBuffer, 0, 0, width, height);
+    detailContext.restore();
+    outputContext.drawImage(this.detailBuffer, 0, 0, width, height);
+  }
+
+  private drawMirroredVideo(
+    context: CanvasRenderingContext2D,
+    video: HTMLVideoElement,
+    fit: { left: number; top: number; width: number; height: number },
+    canvasWidth: number
+  ) {
+    context.save();
+    context.translate(canvasWidth, 0);
+    context.scale(-1, 1);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(video, fit.left, fit.top, fit.width, fit.height);
+    context.restore();
+  }
+
   private drawWarpedTriangle(
     context: CanvasRenderingContext2D,
     image: HTMLImageElement,
@@ -354,6 +510,28 @@ export class FaceMeshRenderer {
     context.closePath();
   }
 
+  private traceFeature(
+    context: CanvasRenderingContext2D,
+    points: Point[],
+    landmarkIndices: number[],
+    scale: number
+  ) {
+    const featurePoints = landmarkIndices.map((index) => points[index]).filter(Boolean);
+    const bounds = this.getBounds(featurePoints);
+    context.beginPath();
+
+    featurePoints.forEach((point, index) => {
+      const x = bounds.centerX + (point.x - bounds.centerX) * scale;
+      const y = bounds.centerY + (point.y - bounds.centerY) * scale;
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+    context.closePath();
+  }
+
   private expandTriangle(points: [Point, Point, Point], amount: number): [Point, Point, Point] {
     const centerX = (points[0].x + points[1].x + points[2].x) / 3;
     const centerY = (points[0].y + points[1].y + points[2].y) / 3;
@@ -393,13 +571,73 @@ export class FaceMeshRenderer {
     return left && right ? Math.atan2(right.y - left.y, right.x - left.x) : 0;
   }
 
+  private measureReferenceLuminance(image: HTMLImageElement, landmarks: FacePoint[]) {
+    if (landmarks.length === 0) {
+      return 128;
+    }
+
+    const size = 256;
+    this.sourceSampleBuffer.width = size;
+    this.sourceSampleBuffer.height = size;
+    const context = this.sourceSampleBuffer.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return 128;
+    }
+
+    context.clearRect(0, 0, size, size);
+    context.drawImage(image, 0, 0, size, size);
+    const points = skinSampleLandmarks
+      .map((index) => landmarks[index])
+      .filter(Boolean)
+      .map((point) => ({ x: point.x * size, y: point.y * size }));
+
+    return this.measurePointLuminance(context, points, 1);
+  }
+
+  private measureTargetLuminance(context: CanvasRenderingContext2D, points: Point[], pixelRatio: number) {
+    const samples = skinSampleLandmarks.map((index) => points[index]).filter(Boolean);
+    return this.measurePointLuminance(context, samples, pixelRatio);
+  }
+
+  private measurePointLuminance(context: CanvasRenderingContext2D, points: Point[], pixelRatio: number) {
+    let luminance = 0;
+    let samples = 0;
+
+    try {
+      for (const point of points) {
+        const x = clamp(Math.round(point.x * pixelRatio), 1, context.canvas.width - 2);
+        const y = clamp(Math.round(point.y * pixelRatio), 1, context.canvas.height - 2);
+        const pixel = context.getImageData(x - 1, y - 1, 3, 3).data;
+
+        for (let index = 0; index < pixel.length; index += 4) {
+          luminance += pixel[index] * 0.2126 + pixel[index + 1] * 0.7152 + pixel[index + 2] * 0.0722;
+          samples += 1;
+        }
+      }
+    } catch {
+      return 128;
+    }
+
+    return samples > 0 ? luminance / samples : 128;
+  }
+
   private getImageFit(image: HTMLImageElement, width: number, height: number, fit: "cover" | "contain") {
+    return this.getMediaFit(image.naturalWidth, image.naturalHeight, width, height, fit);
+  }
+
+  private getMediaFit(
+    mediaWidth: number,
+    mediaHeight: number,
+    width: number,
+    height: number,
+    fit: "cover" | "contain"
+  ) {
     const scale =
       fit === "contain"
-        ? Math.min(width / image.naturalWidth, height / image.naturalHeight)
-        : Math.max(width / image.naturalWidth, height / image.naturalHeight);
-    const renderedWidth = image.naturalWidth * scale;
-    const renderedHeight = image.naturalHeight * scale;
+        ? Math.min(width / mediaWidth, height / mediaHeight)
+        : Math.max(width / mediaWidth, height / mediaHeight);
+    const renderedWidth = mediaWidth * scale;
+    const renderedHeight = mediaHeight * scale;
 
     return {
       left: (width - renderedWidth) / 2,

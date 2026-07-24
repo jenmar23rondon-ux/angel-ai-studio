@@ -154,7 +154,7 @@ export function App() {
   const [cameraError, setCameraError] = useState("");
   const [fps, setFps] = useState(0);
   const [frameLatencyMs, setFrameLatencyMs] = useState(0);
-  const [avatarStyle, setAvatarStyle] = useState("photo");
+  const [avatarStyle, setAvatarStyle] = useState("live-swap");
   const [puppetZoom, setPuppetZoom] = useState(1);
   const [motionIntensity, setMotionIntensity] = useState(1);
   const [smoothing, setSmoothing] = useState(0.68);
@@ -164,6 +164,7 @@ export function App() {
   const [maskFeathering, setMaskFeathering] = useState(12);
   const [facePositionX, setFacePositionX] = useState(0);
   const [facePositionY, setFacePositionY] = useState(0);
+  const [preserveLiveMouth, setPreserveLiveMouth] = useState(true);
   const [fictionalIdentity, setFictionalIdentity] = useState("generated");
   const [expression, setExpression] = useState("natural");
   const [handGesture, setHandGesture] = useState("idle");
@@ -198,6 +199,12 @@ export function App() {
   const smoothedFaceLandmarksRef = useRef<FacePoint[] | null>(null);
   const neutralFaceLandmarksRef = useRef<FacePoint[] | null>(null);
   const lostFaceFramesRef = useRef(0);
+  const lastDetectionAtRef = useRef(0);
+  const lastTrackingSampleRef = useRef<TrackingSample>({
+    faceScore: 0,
+    handScore: 0,
+    label: "waiting for camera"
+  });
   const smoothedMotionRef = useRef<MotionState>(defaultMotion);
   const faceRendererRef = useRef<FaceMeshRenderer | null>(null);
   const metricsRef = useRef({
@@ -226,6 +233,7 @@ export function App() {
     maskFeathering,
     motionIntensity,
     mouthStrength,
+    preserveLiveMouth,
     puppetZoom,
     smoothing,
     trackingMode
@@ -242,6 +250,7 @@ export function App() {
     maskFeathering,
     motionIntensity,
     mouthStrength,
+    preserveLiveMouth,
     puppetZoom,
     smoothing,
     trackingMode
@@ -272,6 +281,7 @@ export function App() {
     maskFeathering,
     motionIntensity,
     mouthStrength,
+    preserveLiveMouth,
     puppetZoom,
     referenceImage
   ]);
@@ -428,6 +438,7 @@ export function App() {
         latencyTotal: 0,
         lastUiUpdateAt: 0
       };
+      lastDetectionAtRef.current = 0;
       const session = ++loopSessionRef.current;
       animationFrameRef.current = window.requestAnimationFrame(() => trackCameraFrame(session));
     } catch {
@@ -459,6 +470,12 @@ export function App() {
     setHandConfidence(0);
     setFps(0);
     setFrameLatencyMs(0);
+    lastDetectionAtRef.current = 0;
+    lastTrackingSampleRef.current = {
+      faceScore: 0,
+      handScore: 0,
+      label: "waiting for camera"
+    };
     smoothedMotionRef.current = defaultMotion;
     setMotion(defaultMotion);
     setTrackingLabel(trackingReadyRef.current ? "landmark engine ready" : "landmark engine idle");
@@ -553,7 +570,13 @@ export function App() {
 
     if (settings.cameraDrivenGestures) {
       if (settings.trackingMode === "landmarks" && trackingReadyRef.current && faceLandmarkerRef.current) {
-        sample = trackLandmarkFrame();
+        if (startedAt - lastDetectionAtRef.current >= 28) {
+          sample = trackLandmarkFrame();
+          lastDetectionAtRef.current = startedAt;
+          lastTrackingSampleRef.current = sample;
+        } else {
+          sample = lastTrackingSampleRef.current;
+        }
       } else {
         sample = trackCameraMotionFallback();
       }
@@ -640,7 +663,9 @@ export function App() {
       faceScore = clamp(1 - lostFaceFramesRef.current / 14, 0, 1);
       label = lostFaceFramesRef.current < 5 ? "reacquiring face" : "face lost";
 
-      if (smoothedFaceLandmarksRef.current && neutralFaceLandmarksRef.current) {
+      if (lostFaceFramesRef.current > 8) {
+        smoothedFaceLandmarksRef.current = null;
+      } else if (smoothedFaceLandmarksRef.current && neutralFaceLandmarksRef.current) {
         smoothedFaceLandmarksRef.current = smoothLandmarks(
           smoothedFaceLandmarksRef.current,
           neutralFaceLandmarksRef.current,
@@ -787,9 +812,12 @@ export function App() {
         fit: settings.avatarStyle === "fullbody" ? "contain" : "cover",
         headRotationStrength: settings.headRotationStrength,
         maskFeathering: settings.maskFeathering,
+        mode: settings.avatarStyle === "photo" || settings.avatarStyle === "portrait" ? "photo-reenactment" : "live-swap",
         motionStrength: settings.motionIntensity,
-        mouthStrength: settings.mouthStrength
-      }
+        mouthStrength: settings.mouthStrength,
+        preserveLiveMouth: settings.preserveLiveMouth
+      },
+      videoRef.current
     );
   }
 
@@ -875,7 +903,7 @@ export function App() {
 
       setReferenceImage(source);
       setFictionalIdentity("uploaded");
-      setAvatarStyle("photo");
+      setAvatarStyle("live-swap");
       const image = new Image();
       image.src = source;
 
@@ -894,7 +922,7 @@ export function App() {
         }
 
         faceRendererRef.current?.setReference(image, landmarks, faceTrianglesRef.current);
-        setReferenceStatus("Reference face mapped. Hair, neck and background stay fixed.");
+        setReferenceStatus("Identity mapped. Your live camera keeps the body, hands, hair and background.");
         window.requestAnimationFrame(renderFaceOutput);
       } catch {
         faceRendererRef.current?.clearReference();
@@ -1144,10 +1172,10 @@ export function App() {
                   <label className="field">
                     Output mode
                     <select value={avatarStyle} onChange={(event) => setAvatarStyle(event.target.value)}>
-                      <option value="photo">Face mesh reenactment</option>
-                      <option value="portrait">Portrait close-up</option>
-                      <option value="fullbody">Full body motion</option>
-                      <option value="cinematic">Fallback generated avatar</option>
+                      <option value="live-swap">Live camera face swap</option>
+                      <option value="photo">Reference photo reenactment</option>
+                      <option value="portrait">Reference portrait close-up</option>
+                      <option value="fullbody">Full camera + face swap</option>
                     </select>
                   </label>
 
@@ -1278,6 +1306,15 @@ export function App() {
                       value={facePositionY}
                     />
                   </label>
+
+                  <label className="toggle-row realtime-toggle">
+                    <input
+                      checked={preserveLiveMouth}
+                      onChange={(event) => setPreserveLiveMouth(event.target.checked)}
+                      type="checkbox"
+                    />
+                    Preserve live mouth interior for teeth and lip sync
+                  </label>
                 </div>
 
                 {cameraError && <p className="error-message">{cameraError}</p>}
@@ -1324,7 +1361,7 @@ export function App() {
                 {mode === "audio"
                   ? "Audio upload and recording flow is scaffolded for MP3/WAV."
                   : mode === "realtime"
-                    ? "This preview uses local browser face and hand landmarks with no artificial delay."
+                    ? "Live swap keeps the camera frame and replaces only the tracked facial region."
                     : "Upload endpoint is scaffolded for S3 signed URLs."}
               </small>
             </div>
@@ -1361,7 +1398,7 @@ export function App() {
             {mode === "realtime" ? (
               <div className="avatar-output">
                 <div className={`ai-face ${avatarStyle}`}>
-                  {referenceImage ? (
+                  {referenceImage || liveEnabled ? (
                     <canvas aria-label="Real-time face mesh output" className="face-output-canvas" ref={outputCanvasRef} />
                   ) : (
                     <div className="photo-empty-state">
@@ -1385,7 +1422,7 @@ export function App() {
                   <span className={liveEnabled ? "done" : ""}>camera</span>
                   <span className={isCalibrated ? "done" : ""}>calibrated</span>
                   <span className={referenceImage ? "done" : ""}>{fictionalIdentity}</span>
-                  <span className={faceConfidence > 0.5 ? "done" : ""}>face mesh</span>
+                  <span className={faceConfidence > 0.5 ? "done" : ""}>live face swap</span>
                   <span>stream output</span>
                 </div>
               </div>
