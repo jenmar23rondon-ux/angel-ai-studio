@@ -103,6 +103,8 @@ class StableLivePortraitPipeline(FasterLivePortraitPipeline):
 
 pipeline: StableLivePortraitPipeline | None = None
 pipeline_lock = asyncio.Lock()
+model_task: asyncio.Task[None] | None = None
+model_loading = False
 model_error = ""
 
 
@@ -234,20 +236,31 @@ def render_frame(frame_bytes: bytes, first_frame: bool) -> tuple[bytes, float]:
     return jpeg.tobytes(), inference_ms
 
 
-@app.on_event("startup")
-async def load_model() -> None:
-    global pipeline, model_error
+def load_model_sync() -> None:
+    global pipeline, model_error, model_loading
+    model_loading = True
+    model_error = ""
     try:
+        print(f"INFO: Loading FasterLivePortrait config from {CONFIG_PATH}", flush=True)
         config = OmegaConf.load(CONFIG_PATH)
         config.infer_params.flag_pasteback = True
-        pipeline = await asyncio.to_thread(
-            StableLivePortraitPipeline,
+        pipeline = StableLivePortraitPipeline(
             cfg=config,
             is_animal=False,
         )
+        print("INFO: FasterLivePortrait model is ready", flush=True)
     except Exception as error:
         model_error = str(error)
         pipeline = None
+        print(f"ERROR: FasterLivePortrait model failed to load: {error}", flush=True)
+    finally:
+        model_loading = False
+
+
+@app.on_event("startup")
+async def start_model_loader() -> None:
+    global model_task
+    model_task = asyncio.create_task(asyncio.to_thread(load_model_sync))
 
 
 @app.get("/health")
@@ -258,6 +271,7 @@ def health() -> JSONResponse:
         content={
             "model": "faster-liveportrait",
             "ready": ready,
+            "loading": model_loading,
             "error": model_error or None,
         },
     )
