@@ -28,6 +28,16 @@ OUTPUT_MAX_DIM = int(os.environ.get("OUTPUT_MAX_DIM", "768"))
 app = FastAPI(title="angel-ai-studio neural face renderer", version="1.0.0")
 
 
+def retarget_scalar(value: np.ndarray) -> np.ndarray:
+    """LivePortrait retargeting expects a single target ratio, not per-eye pairs."""
+    array = np.asarray(value, dtype=np.float32)
+    if array.size == 0:
+        return np.zeros((1, 1), dtype=np.float32)
+    if array.size == 1:
+        return array.reshape(1, 1).astype(np.float32)
+    return np.array([[float(np.mean(array))]], dtype=np.float32)
+
+
 class StableLivePortraitPipeline(FasterLivePortraitPipeline):
     def init_vars(self, **kwargs: Any) -> None:
         super().init_vars(**kwargs)
@@ -71,14 +81,16 @@ class StableLivePortraitPipeline(FasterLivePortraitPipeline):
 
         if self.motion_ema is None:
             self.motion_ema = current
-            self.eye_ema = input_eye_ratio.copy()
-            self.lip_ema = input_lip_ratio.copy()
+            self.eye_ema = retarget_scalar(input_eye_ratio)
+            self.lip_ema = retarget_scalar(input_lip_ratio)
         else:
+            eye_ratio = retarget_scalar(input_eye_ratio)
+            lip_ratio = retarget_scalar(input_lip_ratio)
             for key, value in current.items():
                 alpha = expression_alpha if key in {"exp", "kp"} else pose_alpha
                 self.motion_ema[key] += (value - self.motion_ema[key]) * alpha
-            self.eye_ema += (input_eye_ratio - self.eye_ema) * expression_alpha
-            self.lip_ema += (input_lip_ratio - self.lip_ema) * expression_alpha
+            self.eye_ema += (eye_ratio - self.eye_ema) * expression_alpha
+            self.lip_ema += (lip_ratio - self.lip_ema) * expression_alpha
 
         smoothed = {key: value.copy() for key, value in self.motion_ema.items()}
         smoothed_rotation = get_rotation_matrix(
