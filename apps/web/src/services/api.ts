@@ -10,6 +10,16 @@ export type VoiceOptions = {
   removeNoise: boolean;
 };
 
+export type VideoOptions = {
+  mode: "enhance" | "translate" | "background" | "style" | "shorts";
+  targetLanguage: string;
+  aspectRatio: "original" | "9:16" | "16:9" | "1:1";
+  quality: "draft" | "balanced" | "high";
+  stabilize: boolean;
+  removeBackground: boolean;
+  addCaptions: boolean;
+};
+
 export type Generation = {
   id: string;
   type: GenerationMode;
@@ -33,6 +43,7 @@ export async function createGeneration(input: {
   type: GenerationMode;
   prompt: string;
   consentConfirmed: boolean;
+  videoOptions?: VideoOptions;
   voiceOptions?: VoiceOptions;
 }) {
   const response = await fetch(`${API_URL}/api/generations`, {

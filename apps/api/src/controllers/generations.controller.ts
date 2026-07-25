@@ -18,6 +18,17 @@ const createGenerationSchema = z.object({
       preserveEmotion: z.boolean(),
       removeNoise: z.boolean()
     })
+    .optional(),
+  videoOptions: z
+    .object({
+      mode: z.enum(["enhance", "translate", "background", "style", "shorts"]),
+      targetLanguage: z.string().trim().min(2).max(80),
+      aspectRatio: z.enum(["original", "9:16", "16:9", "1:1"]),
+      quality: z.enum(["draft", "balanced", "high"]),
+      stabilize: z.boolean(),
+      removeBackground: z.boolean(),
+      addCaptions: z.boolean()
+    })
     .optional()
 });
 
@@ -48,7 +59,12 @@ export async function createGeneration(request: Request, response: Response) {
     type: input.type,
     prompt: input.prompt,
     status: "queued",
-    metadata: input.type === "audio" ? input.voiceOptions : undefined,
+    metadata:
+      input.type === "audio"
+        ? input.voiceOptions
+        : input.type === "video"
+          ? input.videoOptions
+          : undefined,
     createdAt: new Date().toISOString()
   };
 

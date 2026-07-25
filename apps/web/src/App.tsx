@@ -1,7 +1,9 @@
 import {
   Activity,
   Camera,
+  Captions,
   Crosshair,
+  Film,
   ImagePlus,
   Images,
   Mic2,
@@ -26,6 +28,7 @@ import {
   Generation,
   GenerationMode,
   listGenerations,
+  VideoOptions,
   VoiceOptions
 } from "./services/api";
 
@@ -105,6 +108,16 @@ const defaultVoiceOptions: VoiceOptions = {
   removeNoise: true
 };
 
+const defaultVideoOptions: VideoOptions = {
+  mode: "enhance",
+  targetLanguage: "English",
+  aspectRatio: "original",
+  quality: "balanced",
+  stabilize: true,
+  removeBackground: false,
+  addCaptions: true
+};
+
 const defaultMotion: MotionState = {
   x: 0,
   y: 0,
@@ -170,6 +183,10 @@ export function App() {
   const [mode, setMode] = useState<GenerationMode>("image");
   const [prompt, setPrompt] = useState("Create a cinematic studio portrait for a consent-based AI avatar profile.");
   const [voiceOptions, setVoiceOptions] = useState<VoiceOptions>(defaultVoiceOptions);
+  const [videoOptions, setVideoOptions] = useState<VideoOptions>(defaultVideoOptions);
+  const [videoFileName, setVideoFileName] = useState("");
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState("");
+  const [videoError, setVideoError] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordedAudioUrl, setRecordedAudioUrl] = useState("");
@@ -183,6 +200,10 @@ export function App() {
   const [smoothing, setSmoothing] = useState(0.68);
   const [eyeRetargeting, setEyeRetargeting] = useState(true);
   const [headRotationStrength, setHeadRotationStrength] = useState(0.9);
+  const [headPitchStrength, setHeadPitchStrength] = useState(1);
+  const [headRollStrength, setHeadRollStrength] = useState(1);
+  const [headTranslationStrength, setHeadTranslationStrength] = useState(1);
+  const [headYawStrength, setHeadYawStrength] = useState(1);
   const [lipRetargeting, setLipRetargeting] = useState(true);
   const [fictionalIdentity, setFictionalIdentity] = useState<"self" | "fictional" | "licensed">("self");
   const [referenceImage, setReferenceImage] = useState("");
@@ -283,7 +304,18 @@ export function App() {
     if (liveEnabled) {
       neuralClientRef.current?.updateOptions(getNeuralOptions());
     }
-  }, [eyeRetargeting, headRotationStrength, lipRetargeting, liveEnabled, motionIntensity, smoothing]);
+  }, [
+    eyeRetargeting,
+    headPitchStrength,
+    headRollStrength,
+    headRotationStrength,
+    headTranslationStrength,
+    headYawStrength,
+    lipRetargeting,
+    liveEnabled,
+    motionIntensity,
+    smoothing
+  ]);
 
   useEffect(() => {
     return () => {
@@ -318,6 +350,14 @@ export function App() {
     };
   }, [recordedAudioUrl]);
 
+  useEffect(() => {
+    return () => {
+      if (videoPreviewUrl) {
+        URL.revokeObjectURL(videoPreviewUrl);
+      }
+    };
+  }, [videoPreviewUrl]);
+
   const stats = useMemo(
     () => ({
       completed: generations.filter((item) => item.status === "completed").length,
@@ -335,6 +375,7 @@ export function App() {
         type: mode,
         prompt,
         consentConfirmed,
+        videoOptions: mode === "video" ? videoOptions : undefined,
         voiceOptions: mode === "audio" ? voiceOptions : undefined
       });
       setGenerations((current) => [generation, ...current.filter((item) => !item.id.startsWith("demo-"))]);
@@ -347,6 +388,35 @@ export function App() {
 
   function updateVoiceOption<Key extends keyof VoiceOptions>(key: Key, value: VoiceOptions[Key]) {
     setVoiceOptions((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateVideoOption<Key extends keyof VideoOptions>(key: Key, value: VideoOptions[Key]) {
+    setVideoOptions((current) => ({ ...current, [key]: value }));
+  }
+
+  function loadVideoFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith("video/")) {
+      setVideoError("Choose an MP4, WebM, or MOV video file.");
+      return;
+    }
+    if (file.size > 250 * 1024 * 1024) {
+      setVideoError("Keep the video under 250 MB for this editor queue.");
+      return;
+    }
+
+    if (videoPreviewUrl) {
+      URL.revokeObjectURL(videoPreviewUrl);
+    }
+
+    setVideoError("");
+    setVideoFileName(file.name);
+    setVideoPreviewUrl(URL.createObjectURL(file));
+    if (prompt.trim().length < 12) {
+      setPrompt("Enhance this video with stable motion, clean lighting, captions, and social-ready export.");
+    }
   }
 
   async function startMicrophoneRecording() {
@@ -810,6 +880,10 @@ export function App() {
     return {
       eyeRetargeting,
       headRotationStrength,
+      headPitchStrength,
+      headRollStrength,
+      headTranslationStrength,
+      headYawStrength,
       lipRetargeting,
       motionStrength: motionIntensity,
       smoothing
@@ -1009,6 +1083,10 @@ export function App() {
     setMotionIntensity(1);
     setEyeRetargeting(true);
     setHeadRotationStrength(0.9);
+    setHeadPitchStrength(1);
+    setHeadRollStrength(1);
+    setHeadTranslationStrength(1);
+    setHeadYawStrength(1);
     setLipRetargeting(true);
   }
 
@@ -1130,7 +1208,7 @@ export function App() {
 
             {mode !== "realtime" && (
               <label className="field">
-                {mode === "audio" ? "Voice task" : "Prompt"}
+                {mode === "audio" ? "Voice task" : mode === "video" ? "Edit instructions" : "Prompt"}
                 <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} />
               </label>
             )}
@@ -1246,6 +1324,108 @@ export function App() {
                   />
                   Remove background noise first
                 </label>
+              </div>
+            )}
+
+            {mode === "video" && (
+              <div className="video-editor">
+                <label className="video-drop">
+                  <input accept="video/*" onChange={(event) => loadVideoFile(event.target.files?.[0])} type="file" />
+                  {videoPreviewUrl ? (
+                    <video controls muted playsInline src={videoPreviewUrl} />
+                  ) : (
+                    <div className="video-drop-empty">
+                      <Film size={30} />
+                      <strong>Upload a video to edit</strong>
+                      <span>MP4, WebM, or MOV under 250 MB</span>
+                    </div>
+                  )}
+                </label>
+
+                {videoFileName && (
+                  <div className="file-chip">
+                    <Video size={16} />
+                    <span>{videoFileName}</span>
+                  </div>
+                )}
+
+                {videoError && <p className="error-message">{videoError}</p>}
+
+                <div className="video-tool-grid">
+                  <label className="field">
+                    AI edit
+                    <select value={videoOptions.mode} onChange={(event) => updateVideoOption("mode", event.target.value as VideoOptions["mode"])}>
+                      <option value="enhance">Enhance lighting and quality</option>
+                      <option value="translate">Translate speech and captions</option>
+                      <option value="background">Replace or blur background</option>
+                      <option value="style">Apply AI style</option>
+                      <option value="shorts">Cut into short clips</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    Export format
+                    <select
+                      value={videoOptions.aspectRatio}
+                      onChange={(event) => updateVideoOption("aspectRatio", event.target.value as VideoOptions["aspectRatio"])}
+                    >
+                      <option value="original">Original</option>
+                      <option value="9:16">Vertical 9:16</option>
+                      <option value="16:9">Wide 16:9</option>
+                      <option value="1:1">Square 1:1</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    Target language
+                    <select
+                      value={videoOptions.targetLanguage}
+                      onChange={(event) => updateVideoOption("targetLanguage", event.target.value)}
+                    >
+                      <option>English</option>
+                      <option>Spanish</option>
+                      <option>Portuguese</option>
+                      <option>French</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    Quality
+                    <select value={videoOptions.quality} onChange={(event) => updateVideoOption("quality", event.target.value as VideoOptions["quality"])}>
+                      <option value="draft">Fast draft</option>
+                      <option value="balanced">Balanced</option>
+                      <option value="high">High quality</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="video-switches">
+                  <label className="toggle-row">
+                    <input
+                      checked={videoOptions.stabilize}
+                      onChange={(event) => updateVideoOption("stabilize", event.target.checked)}
+                      type="checkbox"
+                    />
+                    Stabilize camera shake
+                  </label>
+                  <label className="toggle-row">
+                    <input
+                      checked={videoOptions.addCaptions}
+                      onChange={(event) => updateVideoOption("addCaptions", event.target.checked)}
+                      type="checkbox"
+                    />
+                    <Captions size={17} />
+                    Add captions
+                  </label>
+                  <label className="toggle-row">
+                    <input
+                      checked={videoOptions.removeBackground}
+                      onChange={(event) => updateVideoOption("removeBackground", event.target.checked)}
+                      type="checkbox"
+                    />
+                    Remove background
+                  </label>
+                </div>
               </div>
             )}
 
@@ -1367,12 +1547,60 @@ export function App() {
                   <label className="field range-field compact-range">
                     Head rotation: {headRotationStrength.toFixed(2)}
                     <input
-                      max="1.25"
+                      max="1.45"
                       min="0"
                       onChange={(event) => setHeadRotationStrength(Number(event.target.value))}
                       step="0.05"
                       type="range"
                       value={headRotationStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Left / right: {headYawStrength.toFixed(2)}
+                    <input
+                      max="1.75"
+                      min="0"
+                      onChange={(event) => setHeadYawStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={headYawStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Up / down: {headPitchStrength.toFixed(2)}
+                    <input
+                      max="1.75"
+                      min="0"
+                      onChange={(event) => setHeadPitchStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={headPitchStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Tilt: {headRollStrength.toFixed(2)}
+                    <input
+                      max="1.75"
+                      min="0"
+                      onChange={(event) => setHeadRollStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={headRollStrength}
+                    />
+                  </label>
+
+                  <label className="field range-field compact-range">
+                    Face position: {headTranslationStrength.toFixed(2)}
+                    <input
+                      max="1.6"
+                      min="0"
+                      onChange={(event) => setHeadTranslationStrength(Number(event.target.value))}
+                      step="0.05"
+                      type="range"
+                      value={headTranslationStrength}
                     />
                   </label>
                 </div>
@@ -1426,20 +1654,32 @@ export function App() {
             )}
 
             <div className="upload-slot">
-              {mode === "audio" ? <Mic2 size={22} /> : mode === "realtime" ? <ScanFace size={22} /> : <ImagePlus size={22} />}
+              {mode === "audio" ? (
+                <Mic2 size={22} />
+              ) : mode === "realtime" ? (
+                <ScanFace size={22} />
+              ) : mode === "video" ? (
+                <Film size={22} />
+              ) : (
+                <ImagePlus size={22} />
+              )}
               <span>
                 {mode === "audio"
                   ? "Drop audio file or record from the browser"
                   : mode === "realtime"
                     ? "Neural portrait sessions can be recorded or streamed later"
-                    : "Drop source image or training photos here"}
+                    : mode === "video"
+                      ? "Video upload is prepared for AI editing jobs"
+                      : "Drop source image or training photos here"}
               </span>
               <small>
                 {mode === "audio"
                   ? "Audio upload and recording flow is scaffolded for MP3/WAV."
                   : mode === "realtime"
                     ? "Frames are regenerated by a GPU model instead of deforming the uploaded photograph."
-                    : "Upload endpoint is scaffolded for S3 signed URLs."}
+                    : mode === "video"
+                      ? "The next backend step is uploading this video to private storage before provider processing."
+                      : "Upload endpoint is scaffolded for S3 signed URLs."}
               </small>
             </div>
 
@@ -1531,6 +1771,12 @@ export function App() {
                       <small className="asset-meta">
                         {String(item.metadata.voiceMode ?? "voice")} - {String(item.metadata.targetLanguage ?? "same language")} -{" "}
                         {String(item.metadata.accent ?? "native accent")}
+                      </small>
+                    )}
+                    {item.type === "video" && item.metadata && (
+                      <small className="asset-meta">
+                        {String(item.metadata.mode ?? "edit")} - {String(item.metadata.aspectRatio ?? "original")} -{" "}
+                        {String(item.metadata.quality ?? "balanced")}
                       </small>
                     )}
                   </article>

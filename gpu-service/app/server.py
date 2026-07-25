@@ -43,6 +43,10 @@ class StableLivePortraitPipeline(FasterLivePortraitPipeline):
         super().init_vars(**kwargs)
         self.temporal_smoothing = 0.68
         self.head_rotation_strength = 0.9
+        self.head_pitch_strength = 0.9
+        self.head_roll_strength = 0.9
+        self.head_translation_strength = 1.0
+        self.head_yaw_strength = 0.9
         self.motion_ema: dict[str, np.ndarray] | None = None
         self.eye_ema: np.ndarray | None = None
         self.lip_ema: np.ndarray | None = None
@@ -51,7 +55,20 @@ class StableLivePortraitPipeline(FasterLivePortraitPipeline):
         self.temporal_smoothing = min(0.95, max(0.0, amount))
 
     def set_head_rotation_strength(self, amount: float) -> None:
-        self.head_rotation_strength = min(1.25, max(0.0, amount))
+        self.head_rotation_strength = min(1.45, max(0.0, amount))
+
+    def set_head_motion_strengths(
+        self,
+        *,
+        pitch: float,
+        roll: float,
+        translation: float,
+        yaw: float,
+    ) -> None:
+        self.head_pitch_strength = min(1.75, max(0.0, pitch))
+        self.head_roll_strength = min(1.75, max(0.0, roll))
+        self.head_translation_strength = min(1.6, max(0.0, translation))
+        self.head_yaw_strength = min(1.75, max(0.0, yaw))
 
     def _run(
         self,
@@ -75,9 +92,17 @@ class StableLivePortraitPipeline(FasterLivePortraitPipeline):
             for key, value in x_d_i_info.items()
             if isinstance(value, np.ndarray) and key != "R"
         }
-        for key in ("pitch", "yaw", "roll"):
+        rotation_strengths = {
+            "pitch": self.head_rotation_strength * self.head_pitch_strength,
+            "roll": self.head_rotation_strength * self.head_roll_strength,
+            "yaw": self.head_rotation_strength * self.head_yaw_strength,
+        }
+        for key, strength in rotation_strengths.items():
             neutral = x_d_0_info[key]
-            current[key] = neutral + (current[key] - neutral) * self.head_rotation_strength
+            current[key] = neutral + (current[key] - neutral) * strength
+        if "t" in current and "t" in x_d_0_info:
+            neutral_translation = x_d_0_info["t"]
+            current["t"] = neutral_translation + (current["t"] - neutral_translation) * self.head_translation_strength
 
         if self.motion_ema is None:
             self.motion_ema = current
@@ -177,6 +202,12 @@ def configure_pipeline(options: dict[str, Any], reset_session: bool) -> None:
     pipeline.set_temporal_smoothing(smoothing)
     pipeline.set_head_rotation_strength(
         float(options.get("headRotationStrength", 0.9))
+    )
+    pipeline.set_head_motion_strengths(
+        pitch=float(options.get("headPitchStrength", 1.0)),
+        roll=float(options.get("headRollStrength", 1.0)),
+        translation=float(options.get("headTranslationStrength", 1.0)),
+        yaw=float(options.get("headYawStrength", 1.0)),
     )
     pipeline.update_cfg(
         {

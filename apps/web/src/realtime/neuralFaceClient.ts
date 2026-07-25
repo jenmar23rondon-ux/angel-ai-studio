@@ -12,6 +12,10 @@ export type NeuralRendererStatus =
 export type NeuralRendererOptions = {
   eyeRetargeting: boolean;
   headRotationStrength: number;
+  headPitchStrength: number;
+  headRollStrength: number;
+  headTranslationStrength: number;
+  headYawStrength: number;
   lipRetargeting: boolean;
   motionStrength: number;
   smoothing: number;
