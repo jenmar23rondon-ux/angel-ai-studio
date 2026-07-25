@@ -9,7 +9,7 @@ import { realtimeRouter } from "./routes/realtime.routes.js";
 export const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: env.webOrigin }));
+app.use(cors({ origin: env.webOrigins }));
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_request, response) => {
