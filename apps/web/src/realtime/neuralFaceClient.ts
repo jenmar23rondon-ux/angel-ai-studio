@@ -26,8 +26,10 @@ export type NeuralDebugSnapshot = {
   bufferedBytes: number;
   connected: boolean;
   framesReceived: number;
+  framesRejected: number;
   framesSent: number;
   lastSkipReason: string;
+  lastServerMessage: string;
   socketState: string;
 };
 
@@ -48,8 +50,10 @@ export class NeuralFaceClient {
   private connected = false;
   private encodingFrame = false;
   private framesReceived = 0;
+  private framesRejected = 0;
   private framesSent = 0;
   private lastDebugAt = 0;
+  private lastServerMessage = "none";
   private lastSkipReason = "not started";
   private lastFrameSentAt = 0;
   private lastFrameReceived = 0;
@@ -126,7 +130,9 @@ export class NeuralFaceClient {
     this.connected = false;
     this.encodingFrame = false;
     this.framesReceived = 0;
+    this.framesRejected = 0;
     this.framesSent = 0;
+    this.lastServerMessage = "closed";
     this.lastSkipReason = "closed";
     this.lastFrameSentAt = 0;
     this.lastFrameReceived = 0;
@@ -152,7 +158,7 @@ export class NeuralFaceClient {
     }
   }
 
-  async sendVideoFrame(video: HTMLVideoElement, targetFps = 24) {
+  async sendVideoFrame(video: HTMLVideoElement, targetFps = 8) {
     const socket = this.socket;
     const now = performance.now();
 
@@ -181,7 +187,7 @@ export class NeuralFaceClient {
 
     this.encodingFrame = true;
     this.lastFrameSentAt = now;
-    const size = 512;
+    const size = 384;
     this.captureCanvas.width = size;
     this.captureCanvas.height = size;
     const context = this.captureCanvas.getContext("2d", { alpha: false });
@@ -202,7 +208,7 @@ export class NeuralFaceClient {
 
     try {
       const blob = await new Promise<Blob | null>((resolve) =>
-        this.captureCanvas.toBlob(resolve, "image/jpeg", 0.82)
+        this.captureCanvas.toBlob(resolve, "image/jpeg", 0.72)
       );
 
       if (!blob || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
@@ -245,15 +251,31 @@ export class NeuralFaceClient {
 
       if (message.type === "ready") {
         this.connected = true;
+        this.lastServerMessage = message.message ?? "identity ready";
         this.lastSkipReason = "identity ready";
         this.emitDebug(true);
         this.callbacks?.onStatus("ready", message.message ?? "Neural identity ready");
       } else if (message.type === "metrics") {
+        this.lastServerMessage = `GPU ${message.serverFps ?? 0} fps`;
+        this.emitDebug();
         this.callbacks?.onMetrics({
           inferenceMs: message.inferenceMs ?? 0,
           serverFps: message.serverFps ?? 0
         });
+      } else if (message.type === "progress") {
+        this.lastServerMessage = message.message ?? "GPU is processing";
+        this.lastSkipReason = "GPU processing frame";
+        this.emitDebug(true);
+        this.callbacks?.onStatus("ready", this.lastServerMessage);
+      } else if (message.type === "tracking") {
+        this.framesRejected += 1;
+        this.lastServerMessage = message.message ?? "GPU could not track the camera face";
+        this.lastSkipReason = "GPU tracking rejected frame";
+        this.emitDebug(true);
+        this.callbacks?.onStatus("ready", this.lastServerMessage);
       } else if (message.type === "error") {
+        this.lastServerMessage = message.error ?? "GPU error";
+        this.emitDebug(true);
         this.callbacks?.onError(message.error ?? "Neural rendering failed.");
         this.callbacks?.onStatus("error", message.error ?? "Neural rendering failed");
       }
@@ -279,6 +301,7 @@ export class NeuralFaceClient {
     }
     this.lastFrameReceived = sequence;
     this.framesReceived += 1;
+    this.lastServerMessage = `received frame ${sequence}`;
     this.lastSkipReason = "received frame";
     this.emitDebug();
     this.callbacks?.onFrame(frame, {
@@ -310,8 +333,10 @@ export class NeuralFaceClient {
       bufferedBytes: this.socket?.bufferedAmount ?? 0,
       connected: this.connected,
       framesReceived: this.framesReceived,
+      framesRejected: this.framesRejected,
       framesSent: this.framesSent,
       lastSkipReason: this.lastSkipReason,
+      lastServerMessage: this.lastServerMessage,
       socketState
     });
   }

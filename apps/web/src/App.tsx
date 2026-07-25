@@ -123,8 +123,10 @@ const defaultNeuralDebug: NeuralDebugSnapshot = {
   bufferedBytes: 0,
   connected: false,
   framesReceived: 0,
+  framesRejected: 0,
   framesSent: 0,
   lastSkipReason: "not started",
+  lastServerMessage: "none",
   socketState: "none"
 };
 
@@ -1389,8 +1391,10 @@ export function App() {
                   <span>GPU ready: {neuralDebug.connected ? "yes" : "no"}</span>
                   <span>Sent: {neuralDebug.framesSent}</span>
                   <span>Received: {neuralDebug.framesReceived}</span>
+                  <span>Rejected: {neuralDebug.framesRejected}</span>
                   <span>Buffer: {(neuralDebug.bufferedBytes / 1024).toFixed(0)} KB</span>
                   <span>Last step: {neuralDebug.lastSkipReason}</span>
+                  <span>GPU says: {neuralDebug.lastServerMessage}</span>
                 </div>
 
                 {cameraError && <p className="error-message">{cameraError}</p>}

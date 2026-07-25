@@ -355,6 +355,13 @@ async def realtime_face(websocket: WebSocket) -> None:
 
                 sequence, captured_at = FRAME_HEADER.unpack_from(packet)
                 frame_bytes = packet[FRAME_HEADER.size :]
+                if first_frame or sequence % 20 == 0:
+                    await websocket.send_json(
+                        {
+                            "type": "progress",
+                            "message": f"GPU received camera frame {sequence}",
+                        }
+                    )
 
                 try:
                     neural_jpeg, inference_ms = await asyncio.to_thread(
@@ -363,7 +370,13 @@ async def realtime_face(websocket: WebSocket) -> None:
                         first_frame,
                     )
                 except ValueError as error:
-                    await websocket.send_json({"type": "tracking", "message": str(error)})
+                    await websocket.send_json(
+                        {
+                            "type": "tracking",
+                            "message": str(error),
+                            "sequence": sequence,
+                        }
+                    )
                     continue
 
                 first_frame = False
