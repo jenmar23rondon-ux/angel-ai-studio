@@ -513,6 +513,28 @@ select {
   border-color: #704047;
 }
 
+.neural-debug {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 11px 12px;
+  color: #b7c6d3;
+  background: #0b1117;
+  border: 1px solid #263343;
+  border-radius: 8px;
+}
+
+.neural-debug strong {
+  grid-column: 1 / -1;
+  color: #e9f1f7;
+}
+
+.neural-debug span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .upload-slot {
   display: grid;
   gap: 8px;

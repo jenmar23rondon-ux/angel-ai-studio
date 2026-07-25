@@ -16,6 +16,7 @@ import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   NeuralFaceClient,
+  type NeuralDebugSnapshot,
   type NeuralRendererOptions,
   type NeuralRendererStatus
 } from "./realtime/neuralFaceClient";
@@ -118,6 +119,15 @@ const defaultMotion: MotionState = {
   touchY: -0.15
 };
 
+const defaultNeuralDebug: NeuralDebugSnapshot = {
+  bufferedBytes: 0,
+  connected: false,
+  framesReceived: 0,
+  framesSent: 0,
+  lastSkipReason: "not started",
+  socketState: "none"
+};
+
 const clamp = (value: number, min = -1, max = 1) => Math.max(min, Math.min(max, value));
 const mediapipeVersion = "0.10.35";
 const smoothMotion = (current: MotionState, next: MotionState, amount = 0.34): MotionState => ({
@@ -189,6 +199,7 @@ export function App() {
   const [neuralFps, setNeuralFps] = useState(0);
   const [neuralLatencyMs, setNeuralLatencyMs] = useState(0);
   const [neuralInferenceMs, setNeuralInferenceMs] = useState(0);
+  const [neuralDebug, setNeuralDebug] = useState<NeuralDebugSnapshot>(defaultNeuralDebug);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [generations, setGenerations] = useState<Generation[]>(samples);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -474,6 +485,7 @@ export function App() {
     setNeuralFps(0);
     setNeuralLatencyMs(0);
     setNeuralInferenceMs(0);
+    setNeuralDebug(defaultNeuralDebug);
     setNeuralStatus("idle");
     setNeuralMessage("Neural GPU disconnected");
     lastDetectionAtRef.current = 0;
@@ -588,7 +600,7 @@ export function App() {
     if (!hasNeuralFrameRef.current) {
       renderPreviewFrame();
     }
-    if (videoRef.current && sample.faceScore > 0.35) {
+    if (videoRef.current) {
       void neuralClientRef.current?.sendVideoFrame(videoRef.current);
     }
     updateTrackingMetrics(startedAt, sample);
@@ -827,6 +839,9 @@ export function App() {
             setCameraError(message);
             setNeuralMessage(message);
             setNeuralStatus("error");
+          },
+          onDebug: (snapshot) => {
+            setNeuralDebug(snapshot);
           },
           onFrame: (frame, metrics) => {
             drawNeuralFrame(frame);
@@ -1366,6 +1381,16 @@ export function App() {
                     <strong>{neuralStatus === "streaming" ? "Neural renderer live" : "Neural renderer"}</strong>
                     <span>{neuralMessage}</span>
                   </div>
+                </div>
+
+                <div className="neural-debug">
+                  <strong>Neural diagnostics</strong>
+                  <span>Socket: {neuralDebug.socketState}</span>
+                  <span>GPU ready: {neuralDebug.connected ? "yes" : "no"}</span>
+                  <span>Sent: {neuralDebug.framesSent}</span>
+                  <span>Received: {neuralDebug.framesReceived}</span>
+                  <span>Buffer: {(neuralDebug.bufferedBytes / 1024).toFixed(0)} KB</span>
+                  <span>Last step: {neuralDebug.lastSkipReason}</span>
                 </div>
 
                 {cameraError && <p className="error-message">{cameraError}</p>}

@@ -22,7 +22,17 @@ export type NeuralFrameMetrics = {
   sequence: number;
 };
 
+export type NeuralDebugSnapshot = {
+  bufferedBytes: number;
+  connected: boolean;
+  framesReceived: number;
+  framesSent: number;
+  lastSkipReason: string;
+  socketState: string;
+};
+
 type NeuralFaceCallbacks = {
+  onDebug: (snapshot: NeuralDebugSnapshot) => void;
   onError: (message: string) => void;
   onFrame: (frame: ImageBitmap, metrics: NeuralFrameMetrics) => void;
   onMetrics: (metrics: { inferenceMs: number; serverFps: number }) => void;
@@ -37,6 +47,10 @@ export class NeuralFaceClient {
   private callbacks: NeuralFaceCallbacks | null = null;
   private connected = false;
   private encodingFrame = false;
+  private framesReceived = 0;
+  private framesSent = 0;
+  private lastDebugAt = 0;
+  private lastSkipReason = "not started";
   private lastFrameSentAt = 0;
   private lastFrameReceived = 0;
   private sequence = 0;
@@ -62,6 +76,7 @@ export class NeuralFaceClient {
     socket.addEventListener("message", (event) => void this.handleMessage(event));
     socket.addEventListener("close", (event) => {
       this.connected = false;
+      this.emitDebug(true);
       if (this.socket === socket) {
         const message = event.reason || "Neural renderer disconnected";
         callbacks.onStatus(event.code === 1000 ? "idle" : "error", message);
@@ -79,6 +94,7 @@ export class NeuralFaceClient {
         () => {
           window.clearTimeout(timeout);
           callbacks.onStatus("preparing", "Encoding the reference identity");
+          this.emitDebug(true);
           socket.send(
             JSON.stringify({
               consentConfirmed: true,
@@ -97,6 +113,8 @@ export class NeuralFaceClient {
         "error",
         () => {
           window.clearTimeout(timeout);
+          this.lastSkipReason = "websocket error";
+          this.emitDebug(true);
           reject(new Error("Could not connect to the neural GPU."));
         },
         { once: true }
@@ -107,6 +125,9 @@ export class NeuralFaceClient {
   close() {
     this.connected = false;
     this.encodingFrame = false;
+    this.framesReceived = 0;
+    this.framesSent = 0;
+    this.lastSkipReason = "closed";
     this.lastFrameSentAt = 0;
     this.lastFrameReceived = 0;
     this.sequence = 0;
@@ -116,6 +137,7 @@ export class NeuralFaceClient {
       this.socket.close();
       this.socket = null;
     }
+    this.emitDebug(true);
   }
 
   updateOptions(options: NeuralRendererOptions) {
@@ -134,15 +156,26 @@ export class NeuralFaceClient {
     const socket = this.socket;
     const now = performance.now();
 
-    if (
-      !socket ||
-      socket.readyState !== WebSocket.OPEN ||
-      !this.connected ||
-      this.encodingFrame ||
-      socket.bufferedAmount > maxBufferedBytes ||
-      video.readyState < 2 ||
-      now - this.lastFrameSentAt < 1000 / targetFps
-    ) {
+    const skipReason =
+      !socket
+        ? "socket not created"
+        : socket.readyState !== WebSocket.OPEN
+          ? "socket not open"
+          : !this.connected
+            ? "waiting for identity ready"
+            : this.encodingFrame
+              ? "encoding previous frame"
+              : socket.bufferedAmount > maxBufferedBytes
+                ? "GPU buffer full"
+                : video.readyState < 2
+                  ? "camera frame not ready"
+                  : now - this.lastFrameSentAt < 1000 / targetFps
+                    ? "frame rate limited"
+                    : "";
+
+    if (skipReason) {
+      this.lastSkipReason = skipReason;
+      this.emitDebug();
       return false;
     }
 
@@ -184,6 +217,9 @@ export class NeuralFaceClient {
       view.setFloat64(4, performance.timeOrigin + now, true);
       new Uint8Array(packet, frameHeaderBytes).set(jpeg);
       this.socket.send(packet);
+      this.framesSent += 1;
+      this.lastSkipReason = "sent frame";
+      this.emitDebug();
       return true;
     } finally {
       this.encodingFrame = false;
@@ -209,6 +245,8 @@ export class NeuralFaceClient {
 
       if (message.type === "ready") {
         this.connected = true;
+        this.lastSkipReason = "identity ready";
+        this.emitDebug(true);
         this.callbacks?.onStatus("ready", message.message ?? "Neural identity ready");
       } else if (message.type === "metrics") {
         this.callbacks?.onMetrics({
@@ -240,10 +278,41 @@ export class NeuralFaceClient {
       return;
     }
     this.lastFrameReceived = sequence;
+    this.framesReceived += 1;
+    this.lastSkipReason = "received frame";
+    this.emitDebug();
     this.callbacks?.onFrame(frame, {
       latencyMs: Math.max(0, Date.now() - capturedAt),
       sequence
     });
     this.callbacks?.onStatus("streaming", "Neural face live");
+  }
+
+  private emitDebug(force = false) {
+    const now = performance.now();
+    if (!force && now - this.lastDebugAt < 250) {
+      return;
+    }
+
+    this.lastDebugAt = now;
+    const socketState =
+      this.socket?.readyState === WebSocket.CONNECTING
+        ? "connecting"
+        : this.socket?.readyState === WebSocket.OPEN
+          ? "open"
+          : this.socket?.readyState === WebSocket.CLOSING
+            ? "closing"
+            : this.socket?.readyState === WebSocket.CLOSED
+              ? "closed"
+              : "none";
+
+    this.callbacks?.onDebug({
+      bufferedBytes: this.socket?.bufferedAmount ?? 0,
+      connected: this.connected,
+      framesReceived: this.framesReceived,
+      framesSent: this.framesSent,
+      lastSkipReason: this.lastSkipReason,
+      socketState
+    });
   }
 }
