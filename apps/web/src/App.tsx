@@ -197,42 +197,54 @@ const getVoicePreviewProfile = (options: VoiceOptions) => {
   let highShelfGain = -1.5;
   let driveGain = 1;
   let compressorRatio = 2.4;
+  let distortion = 0.03;
+  let label = "Adult man: lower pitch, stronger low end";
 
   if (target.includes("woman") || target.includes("chica") || target.includes("female")) {
-    playbackRate = 1.16;
-    lowShelfGain = -3.5;
-    highShelfGain = 6.5;
+    playbackRate = 1.24;
+    lowShelfGain = -5.5;
+    highShelfGain = 8;
     compressorRatio = 2;
+    distortion = 0.015;
+    label = "Adult woman: higher pitch, brighter tone";
   }
 
   if (target.includes("old man") || target.includes("viejo")) {
-    playbackRate = 0.78;
+    playbackRate = 0.72;
     lowShelfGain = 8;
-    highShelfGain = -5.5;
-    driveGain = 0.94;
+    highShelfGain = -7.5;
+    driveGain = 0.9;
     compressorRatio = 3.2;
+    distortion = 0.09;
+    label = "Old man: very low pitch, darker tone, rougher texture";
   }
 
   if (target.includes("old woman") || target.includes("vieja")) {
-    playbackRate = 0.92;
-    lowShelfGain = 1.8;
-    highShelfGain = 2.4;
+    playbackRate = 1.02;
+    lowShelfGain = -0.8;
+    highShelfGain = 3.8;
     driveGain = 0.94;
     compressorRatio = 3;
+    distortion = 0.065;
+    label = "Old woman: thinner tone, softer level, rougher texture";
   }
 
   if (target.includes("boy") || target.includes("niño")) {
-    playbackRate = 1.28;
-    lowShelfGain = -6;
-    highShelfGain = 7.5;
+    playbackRate = 1.46;
+    lowShelfGain = -8;
+    highShelfGain = 8;
     compressorRatio = 1.8;
+    distortion = 0.01;
+    label = "Boy: much higher pitch, light tone";
   }
 
   if (target.includes("girl") || target.includes("niña")) {
-    playbackRate = 1.34;
+    playbackRate = 1.52;
     lowShelfGain = -7;
     highShelfGain = 8;
     compressorRatio = 1.7;
+    distortion = 0.01;
+    label = "Girl: highest pitch, bright tone";
   }
 
   if (target.includes("studio")) {
@@ -276,11 +288,26 @@ const getVoicePreviewProfile = (options: VoiceOptions) => {
 
   return {
     compressorRatio,
+    distortion,
     driveGain,
     highShelfGain: clamp(highShelfGain, -8, 8),
+    label,
     lowShelfGain: clamp(lowShelfGain, -8, 8),
-    playbackRate: clamp(playbackRate, 0.72, 1.42)
+    playbackRate: clamp(playbackRate, 0.68, 1.56)
   };
+};
+
+const createDistortionCurve = (amount: number) => {
+  const samples = 2048;
+  const curve = new Float32Array(samples);
+  const drive = amount * 90;
+
+  for (let index = 0; index < samples; index += 1) {
+    const x = (index * 2) / samples - 1;
+    curve[index] = ((3 + drive) * x * 20 * (Math.PI / 180)) / (Math.PI + drive * Math.abs(x));
+  }
+
+  return curve;
 };
 
 const smoothMotion = (current: MotionState, next: MotionState, amount = 0.34): MotionState => ({
@@ -332,6 +359,7 @@ export function App() {
   const [recordedAudioName, setRecordedAudioName] = useState("");
   const [processedAudioUrl, setProcessedAudioUrl] = useState("");
   const [processedAudioName, setProcessedAudioName] = useState("");
+  const [processedAudioDetails, setProcessedAudioDetails] = useState("");
   const [isProcessingVoice, setIsProcessingVoice] = useState(false);
   const [voicePreviewError, setVoicePreviewError] = useState("");
   const [micError, setMicError] = useState("");
@@ -538,6 +566,13 @@ export function App() {
   }
 
   function updateVoiceOption<Key extends keyof VoiceOptions>(key: Key, value: VoiceOptions[Key]) {
+    if (processedAudioUrl) {
+      URL.revokeObjectURL(processedAudioUrl);
+    }
+    setProcessedAudioUrl("");
+    setProcessedAudioName("");
+    setProcessedAudioDetails("");
+    setVoicePreviewError("");
     setVoiceOptions((current) => ({ ...current, [key]: value }));
   }
 
@@ -602,6 +637,7 @@ export function App() {
         setRecordedAudioName(`voice-recording-${new Date().toISOString().slice(11, 19).replaceAll(":", "-")}.webm`);
         setProcessedAudioName("");
         setProcessedAudioUrl("");
+        setProcessedAudioDetails("");
         setVoicePreviewError("");
         setPrompt(`Translate my recorded voice to ${voiceOptions.targetLanguage} and preserve my ${voiceOptions.emotion.toLowerCase()} emotion.`);
         stopMicrophone();
@@ -655,6 +691,7 @@ export function App() {
       const lowShelf = offline.createBiquadFilter();
       const highShelf = offline.createBiquadFilter();
       const compressor = offline.createDynamicsCompressor();
+      const shaper = offline.createWaveShaper();
       const gain = offline.createGain();
 
       source.buffer = inputBuffer;
@@ -672,6 +709,9 @@ export function App() {
       highShelf.frequency.value = 3200;
       highShelf.gain.value = profile.highShelfGain;
 
+      shaper.curve = createDistortionCurve(profile.distortion);
+      shaper.oversample = "2x";
+
       // Keeps the quick browser preview from clipping after pitch/EQ changes.
       compressor.threshold.value = -20;
       compressor.knee.value = 22;
@@ -683,7 +723,8 @@ export function App() {
       source.connect(highPass);
       highPass.connect(lowShelf);
       lowShelf.connect(highShelf);
-      highShelf.connect(compressor);
+      highShelf.connect(shaper);
+      shaper.connect(compressor);
       compressor.connect(gain);
       gain.connect(offline.destination);
 
@@ -698,6 +739,9 @@ export function App() {
 
       setProcessedAudioUrl(nextUrl);
       setProcessedAudioName(`changed-${voiceOptions.targetVoice.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.wav`);
+      setProcessedAudioDetails(
+        `${profile.label}. Pitch rate ${profile.playbackRate.toFixed(2)}x, low EQ ${profile.lowShelfGain.toFixed(1)} dB, high EQ ${profile.highShelfGain.toFixed(1)} dB.`
+      );
     } catch (previewError) {
       setVoicePreviewError(
         previewError instanceof Error
@@ -1498,6 +1542,10 @@ export function App() {
                         <strong>Changed voice preview</strong>
                         <audio controls src={processedAudioUrl} />
                         <small>{processedAudioName}</small>
+                        {processedAudioDetails && <small>{processedAudioDetails}</small>}
+                        <a className="download-preview" download={processedAudioName} href={processedAudioUrl}>
+                          Download changed voice
+                        </a>
                       </div>
                     )}
 
