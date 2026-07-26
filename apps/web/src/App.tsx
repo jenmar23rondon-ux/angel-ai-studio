@@ -145,6 +145,105 @@ const defaultNeuralDebug: NeuralDebugSnapshot = {
 
 const clamp = (value: number, min = -1, max = 1) => Math.max(min, Math.min(max, value));
 const mediapipeVersion = "0.10.35";
+const getAudioContext = () => {
+  const audioWindow = window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+  return new (audioWindow.AudioContext ?? audioWindow.webkitAudioContext)();
+};
+
+const writeAscii = (view: DataView, offset: number, value: string) => {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+};
+
+const audioBufferToWavBlob = (buffer: AudioBuffer) => {
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+  const frameCount = buffer.length;
+  const bytesPerSample = 2;
+  const dataSize = frameCount * buffer.numberOfChannels * bytesPerSample;
+  const output = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(output);
+  let offset = 44;
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, buffer.numberOfChannels, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * buffer.numberOfChannels * bytesPerSample, true);
+  view.setUint16(32, buffer.numberOfChannels * bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    for (let channel = 0; channel < channels.length; channel += 1) {
+      const sample = clamp(channels[channel][frame] ?? 0, -1, 1);
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += bytesPerSample;
+    }
+  }
+
+  return new Blob([output], { type: "audio/wav" });
+};
+
+const getVoicePreviewProfile = (options: VoiceOptions) => {
+  const target = `${options.targetVoice} ${options.accent} ${options.emotion}`.toLowerCase();
+  let playbackRate = 1.04;
+  let lowShelfGain = 1.5;
+  let highShelfGain = 2.2;
+  let driveGain = 1;
+
+  if (target.includes("warm") || target.includes("narrator")) {
+    playbackRate = 0.92;
+    lowShelfGain = 5.5;
+    highShelfGain = -1.2;
+  }
+
+  if (target.includes("assistant") || target.includes("neutral us")) {
+    playbackRate = 1.08;
+    lowShelfGain = -1.4;
+    highShelfGain = 4.2;
+  }
+
+  if (target.includes("cloned") || target.includes("my cloned")) {
+    playbackRate = 0.98;
+    lowShelfGain = 1.2;
+    highShelfGain = 1.4;
+  }
+
+  if (target.includes("british")) {
+    playbackRate += 0.02;
+    highShelfGain += 1.1;
+  }
+
+  if (target.includes("spanish") || target.includes("colombian") || target.includes("mexican")) {
+    playbackRate -= 0.03;
+    lowShelfGain += 1.8;
+  }
+
+  if (target.includes("energetic")) {
+    playbackRate += 0.06;
+    highShelfGain += 1.8;
+    driveGain = 1.08;
+  }
+
+  if (target.includes("calm") || target.includes("serious")) {
+    playbackRate -= 0.04;
+    lowShelfGain += 1.4;
+  }
+
+  return {
+    driveGain,
+    highShelfGain: clamp(highShelfGain, -8, 8),
+    lowShelfGain: clamp(lowShelfGain, -8, 8),
+    playbackRate: clamp(playbackRate, 0.82, 1.18)
+  };
+};
+
 const smoothMotion = (current: MotionState, next: MotionState, amount = 0.34): MotionState => ({
   x: current.x + (next.x - current.x) * amount,
   y: current.y + (next.y - current.y) * amount,
@@ -190,7 +289,12 @@ export function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordedAudioUrl, setRecordedAudioUrl] = useState("");
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
   const [recordedAudioName, setRecordedAudioName] = useState("");
+  const [processedAudioUrl, setProcessedAudioUrl] = useState("");
+  const [processedAudioName, setProcessedAudioName] = useState("");
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [voicePreviewError, setVoicePreviewError] = useState("");
   const [micError, setMicError] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -352,6 +456,14 @@ export function App() {
 
   useEffect(() => {
     return () => {
+      if (processedAudioUrl) {
+        URL.revokeObjectURL(processedAudioUrl);
+      }
+    };
+  }, [processedAudioUrl]);
+
+  useEffect(() => {
+    return () => {
       if (videoPreviewUrl) {
         URL.revokeObjectURL(videoPreviewUrl);
       }
@@ -442,9 +554,16 @@ export function App() {
         if (recordedAudioUrl) {
           URL.revokeObjectURL(recordedAudioUrl);
         }
+        if (processedAudioUrl) {
+          URL.revokeObjectURL(processedAudioUrl);
+        }
 
+        setRecordedAudioBlob(audioBlob);
         setRecordedAudioUrl(audioUrl);
         setRecordedAudioName(`voice-recording-${new Date().toISOString().slice(11, 19).replaceAll(":", "-")}.webm`);
+        setProcessedAudioName("");
+        setProcessedAudioUrl("");
+        setVoicePreviewError("");
         setPrompt(`Translate my recorded voice to ${voiceOptions.targetLanguage} and preserve my ${voiceOptions.emotion.toLowerCase()} emotion.`);
         stopMicrophone();
       });
@@ -471,6 +590,84 @@ export function App() {
     }
 
     setIsRecording(false);
+  }
+
+  async function processVoicePreview() {
+    setVoicePreviewError("");
+
+    if (!recordedAudioBlob) {
+      setVoicePreviewError("Record your voice first, then create the changed preview.");
+      return;
+    }
+
+    setIsProcessingVoice(true);
+
+    try {
+      const sourceBytes = await recordedAudioBlob.arrayBuffer();
+      const decoder = getAudioContext();
+      const inputBuffer = await decoder.decodeAudioData(sourceBytes.slice(0));
+      await decoder.close();
+
+      const profile = getVoicePreviewProfile(voiceOptions);
+      const renderedLength = Math.max(1, Math.ceil(inputBuffer.length / profile.playbackRate));
+      const offline = new OfflineAudioContext(inputBuffer.numberOfChannels, renderedLength, inputBuffer.sampleRate);
+      const source = offline.createBufferSource();
+      const highPass = offline.createBiquadFilter();
+      const lowShelf = offline.createBiquadFilter();
+      const highShelf = offline.createBiquadFilter();
+      const compressor = offline.createDynamicsCompressor();
+      const gain = offline.createGain();
+
+      source.buffer = inputBuffer;
+      source.playbackRate.value = profile.playbackRate;
+
+      highPass.type = "highpass";
+      highPass.frequency.value = voiceOptions.removeNoise ? 90 : 35;
+      highPass.Q.value = 0.65;
+
+      lowShelf.type = "lowshelf";
+      lowShelf.frequency.value = 220;
+      lowShelf.gain.value = profile.lowShelfGain;
+
+      highShelf.type = "highshelf";
+      highShelf.frequency.value = 3200;
+      highShelf.gain.value = profile.highShelfGain;
+
+      // Keeps the quick browser preview from clipping after pitch/EQ changes.
+      compressor.threshold.value = -20;
+      compressor.knee.value = 22;
+      compressor.ratio.value = voiceOptions.preserveEmotion ? 2.2 : 3.6;
+      compressor.attack.value = 0.008;
+      compressor.release.value = 0.16;
+      gain.gain.value = profile.driveGain;
+
+      source.connect(highPass);
+      highPass.connect(lowShelf);
+      lowShelf.connect(highShelf);
+      highShelf.connect(compressor);
+      compressor.connect(gain);
+      gain.connect(offline.destination);
+
+      source.start(0);
+      const renderedBuffer = await offline.startRendering();
+      const processedBlob = audioBufferToWavBlob(renderedBuffer);
+      const nextUrl = URL.createObjectURL(processedBlob);
+
+      if (processedAudioUrl) {
+        URL.revokeObjectURL(processedAudioUrl);
+      }
+
+      setProcessedAudioUrl(nextUrl);
+      setProcessedAudioName(`changed-${voiceOptions.targetVoice.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.wav`);
+    } catch (previewError) {
+      setVoicePreviewError(
+        previewError instanceof Error
+          ? `Voice preview failed: ${previewError.message}`
+          : "Voice preview failed. Try recording again in this browser."
+      );
+    } finally {
+      setIsProcessingVoice(false);
+    }
   }
 
   async function startCamera() {
@@ -1241,12 +1438,38 @@ export function App() {
 
                 {recordedAudioUrl && (
                   <div className="audio-playback">
-                    <audio controls src={recordedAudioUrl} />
-                    <small>Local preview only. The next backend step is uploading this blob to private storage.</small>
+                    <div className="audio-preview-card">
+                      <strong>Original recording</strong>
+                      <audio controls src={recordedAudioUrl} />
+                      <small>{recordedAudioName}</small>
+                    </div>
+
+                    <button
+                      className="record-action preview-action"
+                      disabled={isProcessingVoice}
+                      onClick={processVoicePreview}
+                      type="button"
+                    >
+                      <Sparkles size={17} />
+                      {isProcessingVoice ? "Changing voice..." : "Preview voice change"}
+                    </button>
+
+                    {processedAudioUrl && (
+                      <div className="audio-preview-card processed">
+                        <strong>Changed voice preview</strong>
+                        <audio controls src={processedAudioUrl} />
+                        <small>{processedAudioName}</small>
+                      </div>
+                    )}
+
+                    <small>
+                      This browser preview changes tone, pitch, EQ and cleanup locally. Real language translation still needs a voice provider connected to the backend.
+                    </small>
                   </div>
                 )}
 
                 {micError && <p className="error-message">{micError}</p>}
+                {voicePreviewError && <p className="error-message">{voicePreviewError}</p>}
 
                 <label className="field">
                   Mode
