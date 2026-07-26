@@ -100,7 +100,7 @@ const samples: Generation[] = [
 
 const defaultVoiceOptions: VoiceOptions = {
   voiceMode: "voice-conversion",
-  targetVoice: "Designed studio voice",
+  targetVoice: "Adult man",
   accent: "Neutral US",
   targetLanguage: "English",
   emotion: "Natural",
@@ -192,27 +192,65 @@ const audioBufferToWavBlob = (buffer: AudioBuffer) => {
 
 const getVoicePreviewProfile = (options: VoiceOptions) => {
   const target = `${options.targetVoice} ${options.accent} ${options.emotion}`.toLowerCase();
-  let playbackRate = 1.04;
-  let lowShelfGain = 1.5;
-  let highShelfGain = 2.2;
+  let playbackRate = 0.9;
+  let lowShelfGain = 6;
+  let highShelfGain = -1.5;
   let driveGain = 1;
+  let compressorRatio = 2.4;
+
+  if (target.includes("woman") || target.includes("chica") || target.includes("female")) {
+    playbackRate = 1.16;
+    lowShelfGain = -3.5;
+    highShelfGain = 6.5;
+    compressorRatio = 2;
+  }
+
+  if (target.includes("old man") || target.includes("viejo")) {
+    playbackRate = 0.78;
+    lowShelfGain = 8;
+    highShelfGain = -5.5;
+    driveGain = 0.94;
+    compressorRatio = 3.2;
+  }
+
+  if (target.includes("old woman") || target.includes("vieja")) {
+    playbackRate = 0.92;
+    lowShelfGain = 1.8;
+    highShelfGain = 2.4;
+    driveGain = 0.94;
+    compressorRatio = 3;
+  }
+
+  if (target.includes("boy") || target.includes("niño")) {
+    playbackRate = 1.28;
+    lowShelfGain = -6;
+    highShelfGain = 7.5;
+    compressorRatio = 1.8;
+  }
+
+  if (target.includes("girl") || target.includes("niña")) {
+    playbackRate = 1.34;
+    lowShelfGain = -7;
+    highShelfGain = 8;
+    compressorRatio = 1.7;
+  }
+
+  if (target.includes("studio")) {
+    playbackRate = 1.04;
+    lowShelfGain = 1.5;
+    highShelfGain = 2.2;
+  }
 
   if (target.includes("warm") || target.includes("narrator")) {
-    playbackRate = 0.92;
-    lowShelfGain = 5.5;
-    highShelfGain = -1.2;
+    playbackRate = 0.88;
+    lowShelfGain = 6.5;
+    highShelfGain = -2.2;
   }
 
-  if (target.includes("assistant") || target.includes("neutral us")) {
-    playbackRate = 1.08;
-    lowShelfGain = -1.4;
-    highShelfGain = 4.2;
-  }
-
-  if (target.includes("cloned") || target.includes("my cloned")) {
-    playbackRate = 0.98;
-    lowShelfGain = 1.2;
-    highShelfGain = 1.4;
+  if (target.includes("assistant") || target.includes("clear")) {
+    playbackRate = 1.12;
+    lowShelfGain = -2.2;
+    highShelfGain = 5.4;
   }
 
   if (target.includes("british")) {
@@ -237,10 +275,11 @@ const getVoicePreviewProfile = (options: VoiceOptions) => {
   }
 
   return {
+    compressorRatio,
     driveGain,
     highShelfGain: clamp(highShelfGain, -8, 8),
     lowShelfGain: clamp(lowShelfGain, -8, 8),
-    playbackRate: clamp(playbackRate, 0.82, 1.18)
+    playbackRate: clamp(playbackRate, 0.72, 1.42)
   };
 };
 
@@ -636,7 +675,7 @@ export function App() {
       // Keeps the quick browser preview from clipping after pitch/EQ changes.
       compressor.threshold.value = -20;
       compressor.knee.value = 22;
-      compressor.ratio.value = voiceOptions.preserveEmotion ? 2.2 : 3.6;
+      compressor.ratio.value = voiceOptions.preserveEmotion ? profile.compressorRatio : profile.compressorRatio + 1.2;
       compressor.attack.value = 0.008;
       compressor.release.value = 0.16;
       gain.gain.value = profile.driveGain;
@@ -1489,8 +1528,13 @@ export function App() {
                     value={voiceOptions.targetVoice}
                     onChange={(event) => updateVoiceOption("targetVoice", event.target.value)}
                   >
+                    <option>Adult man</option>
+                    <option>Adult woman</option>
+                    <option>Old man</option>
+                    <option>Old woman</option>
+                    <option>Boy</option>
+                    <option>Girl</option>
                     <option>Designed studio voice</option>
-                    <option>My cloned voice</option>
                     <option>Warm narrator</option>
                     <option>Clear assistant</option>
                   </select>
