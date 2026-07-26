@@ -23,6 +23,7 @@ import {
   type NeuralRendererStatus
 } from "./realtime/neuralFaceClient";
 import {
+  convertVoice,
   createGeneration,
   createRealtimeFaceSession,
   Generation,
@@ -92,7 +93,7 @@ const samples: Generation[] = [
     metadata: {
       voiceMode: "translation",
       targetLanguage: "English",
-      accent: "Neutral US"
+      accent: "Neutral American English"
     },
     createdAt: new Date(Date.now() - 1000 * 60 * 7).toISOString()
   }
@@ -101,12 +102,30 @@ const samples: Generation[] = [
 const defaultVoiceOptions: VoiceOptions = {
   voiceMode: "voice-conversion",
   targetVoice: "Adult man",
-  accent: "Neutral US",
+  accent: "Neutral American English",
   targetLanguage: "English",
   emotion: "Natural",
   preserveEmotion: true,
   removeNoise: true
 };
+
+const languageOptions = ["English", "Spanish", "Portuguese", "French", "Italian", "German", "Japanese", "Korean"];
+
+const accentOptionsByLanguage: Record<string, string[]> = {
+  English: ["Neutral American English", "British English", "Australian English", "Irish English", "Indian English"],
+  Spanish: ["Latin American Spanish", "Colombian Spanish", "Mexican Spanish", "Caribbean Spanish", "Castilian Spanish"],
+  Portuguese: ["Brazilian Portuguese", "European Portuguese"],
+  French: ["Parisian French", "Canadian French"],
+  Italian: ["Standard Italian", "Northern Italian"],
+  German: ["Standard German", "Austrian German"],
+  Japanese: ["Tokyo Japanese", "Kansai Japanese"],
+  Korean: ["Seoul Korean"]
+};
+
+const allAccentOptions = Array.from(new Set(Object.values(accentOptionsByLanguage).flat()));
+
+const getDefaultAccentForLanguage = (language: string) =>
+  accentOptionsByLanguage[language]?.[0] ?? "Neutral American English";
 
 const defaultVideoOptions: VideoOptions = {
   mode: "enhance",
@@ -189,6 +208,17 @@ const audioBufferToWavBlob = (buffer: AudioBuffer) => {
 
   return new Blob([output], { type: "audio/wav" });
 };
+
+const blobToBase64 = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(result.split(",")[1] ?? "");
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Could not read audio.")));
+    reader.readAsDataURL(blob);
+  });
 
 const getVoicePreviewProfile = (options: VoiceOptions) => {
   const target = `${options.targetVoice} ${options.accent} ${options.emotion}`.toLowerCase();
@@ -573,7 +603,22 @@ export function App() {
     setProcessedAudioName("");
     setProcessedAudioDetails("");
     setVoicePreviewError("");
-    setVoiceOptions((current) => ({ ...current, [key]: value }));
+    setVoiceOptions((current) => {
+      if (key === "targetLanguage") {
+        return {
+          ...current,
+          accent: getDefaultAccentForLanguage(String(value)),
+          targetLanguage: value as VoiceOptions["targetLanguage"],
+          voiceMode: "translation"
+        };
+      }
+
+      if (key === "accent" && current.voiceMode === "voice-conversion") {
+        return { ...current, accent: value as VoiceOptions["accent"], voiceMode: "accent" };
+      }
+
+      return { ...current, [key]: value };
+    });
   }
 
   function updateVideoOption<Key extends keyof VideoOptions>(key: Key, value: VideoOptions[Key]) {
@@ -675,9 +720,52 @@ export function App() {
       return;
     }
 
+    if (!consentConfirmed) {
+      setVoicePreviewError("Confirm that you have rights and consent before changing or translating voice.");
+      return;
+    }
+
     setIsProcessingVoice(true);
 
     try {
+      const shouldUseProvider = true;
+
+      if (shouldUseProvider) {
+        try {
+          const result = await convertVoice({
+            audioBase64: await blobToBase64(recordedAudioBlob),
+            consentConfirmed,
+            fileName: recordedAudioName || "voice-recording.webm",
+            mimeType: recordedAudioBlob.type || "audio/webm",
+            voiceOptions
+          });
+          const processedBlob = new Blob(
+            [Uint8Array.from(atob(result.outputAudioBase64), (character) => character.charCodeAt(0))],
+            { type: result.outputMimeType }
+          );
+          const nextUrl = URL.createObjectURL(processedBlob);
+
+          if (processedAudioUrl) {
+            URL.revokeObjectURL(processedAudioUrl);
+          }
+
+          setProcessedAudioUrl(nextUrl);
+          setProcessedAudioName(
+            `openai-${voiceOptions.voiceMode}-${voiceOptions.targetLanguage.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.mp3`
+          );
+          setProcessedAudioDetails(
+            `OpenAI ${voiceOptions.voiceMode}: "${result.transcript}" -> "${result.translatedText}". Voice ${result.voiceUsed}, ${voiceOptions.accent}.`
+          );
+          return;
+        } catch (providerError) {
+          setVoicePreviewError(
+            providerError instanceof Error
+              ? `AI voice provider failed, so I made a local preview instead: ${providerError.message}`
+              : "AI voice provider failed, so I made a local preview instead."
+          );
+        }
+      }
+
       const sourceBytes = await recordedAudioBlob.arrayBuffer();
       const decoder = getAudioContext();
       const inputBuffer = await decoder.decodeAudioData(sourceBytes.slice(0));
@@ -740,7 +828,7 @@ export function App() {
       setProcessedAudioUrl(nextUrl);
       setProcessedAudioName(`changed-${voiceOptions.targetVoice.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.wav`);
       setProcessedAudioDetails(
-        `${profile.label}. Pitch rate ${profile.playbackRate.toFixed(2)}x, low EQ ${profile.lowShelfGain.toFixed(1)} dB, high EQ ${profile.highShelfGain.toFixed(1)} dB.`
+        `${profile.label}. Local preview only: pitch rate ${profile.playbackRate.toFixed(2)}x, low EQ ${profile.lowShelfGain.toFixed(1)} dB, high EQ ${profile.highShelfGain.toFixed(1)} dB.`
       );
     } catch (previewError) {
       setVoicePreviewError(
@@ -1550,7 +1638,7 @@ export function App() {
                     )}
 
                     <small>
-                      This browser preview changes tone, pitch, EQ and cleanup locally. Real language translation still needs a voice provider connected to the backend.
+                      Voice, accent and language changes try the backend voice provider first. If it is unavailable, the app creates a fast local preview.
                     </small>
                   </div>
                 )}
@@ -1565,8 +1653,8 @@ export function App() {
                     onChange={(event) => updateVoiceOption("voiceMode", event.target.value as VoiceOptions["voiceMode"])}
                   >
                     <option value="voice-conversion">Change voice, keep words</option>
-                    <option value="accent">Change accent</option>
-                    <option value="translation">Translate with voice</option>
+                    <option value="accent">Change accent, keep language</option>
+                    <option value="translation">Translate and speak target language</option>
                   </select>
                 </label>
 
@@ -1591,11 +1679,9 @@ export function App() {
                 <label className="field">
                   Accent
                   <select value={voiceOptions.accent} onChange={(event) => updateVoiceOption("accent", event.target.value)}>
-                    <option>Neutral US</option>
-                    <option>British</option>
-                    <option>Mexican Spanish</option>
-                    <option>Colombian Spanish</option>
-                    <option>Brazilian Portuguese</option>
+                    {allAccentOptions.map((accent) => (
+                      <option key={accent}>{accent}</option>
+                    ))}
                   </select>
                 </label>
 
@@ -1605,10 +1691,9 @@ export function App() {
                     value={voiceOptions.targetLanguage}
                     onChange={(event) => updateVoiceOption("targetLanguage", event.target.value)}
                   >
-                    <option>English</option>
-                    <option>Spanish</option>
-                    <option>Portuguese</option>
-                    <option>French</option>
+                    {languageOptions.map((language) => (
+                      <option key={language}>{language}</option>
+                    ))}
                   </select>
                 </label>
 

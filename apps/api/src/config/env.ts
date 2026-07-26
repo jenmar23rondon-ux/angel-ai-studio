@@ -9,6 +9,10 @@ export const env = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
+  openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+  openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+  openaiTranscriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "whisper-1",
+  openaiTtsModel: process.env.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts",
   realtimeGpuUrl: process.env.REALTIME_GPU_URL ?? "",
   realtimeSessionSecret: process.env.REALTIME_SESSION_SECRET ?? ""
 };

@@ -37,6 +37,16 @@ export type RealtimeFaceSession = {
   wsUrl: string;
 };
 
+export type VoiceConversionResult = {
+  accentInstruction: string;
+  outputAudioBase64: string;
+  outputMimeType: string;
+  provider: "openai";
+  transcript: string;
+  translatedText: string;
+  voiceUsed: string;
+};
+
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
 export async function createGeneration(input: {
@@ -85,4 +95,25 @@ export async function createRealtimeFaceSession(input: {
   }
 
   return (await response.json()) as RealtimeFaceSession;
+}
+
+export async function convertVoice(input: {
+  audioBase64: string;
+  consentConfirmed: boolean;
+  fileName: string;
+  mimeType: string;
+  voiceOptions: VoiceOptions;
+}) {
+  const response = await fetch(`${API_URL}/api/voice/convert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Voice conversion failed.");
+  }
+
+  return (await response.json()) as VoiceConversionResult;
 }
