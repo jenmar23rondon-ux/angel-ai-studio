@@ -758,6 +758,10 @@ export function App() {
           );
           return;
         } catch (providerError) {
+          if (voiceOptions.voiceMode === "translation") {
+            throw providerError;
+          }
+
           setVoicePreviewError(
             providerError instanceof Error
               ? `AI voice provider failed, so I made a local preview instead: ${providerError.message}`
@@ -1639,6 +1643,7 @@ export function App() {
 
                     <small>
                       Voice, accent and language changes try the backend voice provider first. If it is unavailable, the app creates a fast local preview.
+                      Translation requires the backend provider and will show an error instead of pretending locally.
                     </small>
                   </div>
                 )}

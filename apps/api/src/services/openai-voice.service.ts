@@ -47,7 +47,7 @@ function getOpenAiVoice(targetVoice: string) {
 function getAccentInstruction(options: VoiceOptions) {
   const mode =
     options.voiceMode === "translation"
-      ? `Translate the text into ${options.targetLanguage}.`
+      ? `Translate the text into ${options.targetLanguage}. The final spoken text must be entirely in ${options.targetLanguage}, even if the source language is different.`
       : options.voiceMode === "accent"
         ? "Keep the original language and words as much as possible."
         : "Keep the original language and meaning.";
@@ -121,11 +121,19 @@ export async function convertVoiceWithOpenAI(input: VoiceConversionInput) {
       {
         role: "system",
         content:
-          "You prepare short spoken scripts for AI text-to-speech. Return only the final words to speak, with no labels or commentary."
+          "You prepare short spoken scripts for AI text-to-speech. Return only the final words to speak, with no labels, markdown, commentary, source text, or translation notes."
       },
       {
         role: "user",
-        content: `${styleInstruction}\n\nSource transcript:\n${transcript}`
+        content: `${styleInstruction}
+
+Rules:
+- If the mode asks for translation, do not leave the result in the source language.
+- Preserve names, brands and numbers.
+- Keep the result natural for spoken audio.
+
+Source transcript:
+${transcript}`
       }
     ],
     temperature: 0.35
