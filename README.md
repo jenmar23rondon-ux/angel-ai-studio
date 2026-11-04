@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Angel AI Studio" width="100%">
+</p>
+
 # angel-ai-studio
 
 Consent-based AI avatar and media generation platform.
